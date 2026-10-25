@@ -86,10 +86,11 @@ jobs:
             echo "=== Emulator ready ==="
             adb devices
 
-            echo "=== adb root + remount ==="
+            echo "=== adb root ==="
             adb root
             sleep 2
-            adb remount
+            echo "=== mount /system rw ==="
+            adb shell mount -o remount,rw /system || true
             sleep 1
 
             echo "=== Install mitmproxy CA cert as system cert ==="

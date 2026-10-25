@@ -25,23 +25,26 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install AVD components
+      - name: Install emulator + system image
         run: |
-          sdkmanager --install \
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          ls $ANDROID_HOME/cmdline-tools/ || true
+          # Accept licenses
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          # Install required components
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
             "emulator" \
             "system-images;android-34;google_apis_playstore;x86_64"
 
       - name: Create AVD
         run: |
-          echo "no" | avdmanager create avd \
+          echo "no" | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd \
             --name "test_avd" \
             --package "system-images;android-34;google_apis_playstore;x86_64" \
-            --device "pixel_6"
-          echo "Created AVD"
+            --device "pixel_6" \
+            --force
+          $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager list avd
 
       - name: Start emulator and run tests
         uses: reactivecircus/android-emulator-runner@v2
@@ -57,28 +60,23 @@ jobs:
             echo "=== Emulator booted ==="
             adb devices
 
-            echo "=== Install APK ==="
+            echo "=== Install patched APK ==="
             adb install -r apk/clean_patched.apk && echo "INSTALL_OK" || echo "INSTALL_FAIL"
 
             echo "=== Clear logcat ==="
             adb logcat -c
 
-            echo "=== Launch app ==="
-            adb shell am start -n com.zhiliaoapp.musically.go/com.zhiliaoapp.musically.go.mini.MiniApplication || true
-            sleep 5
-
             echo "=== Open invite URL ==="
             adb shell am start \
               -a android.intent.action.VIEW \
-              -d "https://lite.tiktok.com/t/ZS9y8Hn4KXRgV-6TKv1/" \
-              com.zhiliaoapp.musically.go || true
-            sleep 15
+              -d "https://lite.tiktok.com/t/ZS9y8Hn4KXRgV-6TKv1/" || true
+            sleep 20
 
-            echo "=== Logcat (TKL_UCODE) ==="
-            adb logcat -d | grep -i "TKL_UCODE" || echo "TKL_UCODE not found in logcat"
+            echo "=== TKL_UCODE in logcat ==="
+            adb logcat -d | grep "TKL_UCODE" || echo "TKL_UCODE not found"
 
-            echo "=== Full logcat (last 200 lines) ==="
-            adb logcat -d -t 200 > logcat_full.txt
+            echo "=== Full logcat ==="
+            adb logcat -d -t 300 > logcat_full.txt
             cat logcat_full.txt
 
       - name: Upload logcat

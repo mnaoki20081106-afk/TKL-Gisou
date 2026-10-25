@@ -89,8 +89,23 @@ jobs:
             echo "=== adb root ==="
             adb root
             sleep 2
-            echo "=== mount / rw (system-as-root on api-29) ==="
+
+            echo "=== disable-verity + reboot (dm-verity blocks rw mount) ==="
+            adb disable-verity || true
+            adb reboot
+            sleep 10
+            adb wait-for-device
+            for i in $(seq 1 30); do
+              result=$(adb shell getprop sys.boot_completed 2>/dev/null || echo "")
+              [ "$result" = "1" ] && { echo "Boot completed"; break; }
+              sleep 3
+            done
+            adb root
+            sleep 2
+
+            echo "=== mount / rw ==="
             adb shell mount -o remount,rw / || true
+            adb shell mount -o remount,rw /system || true
             sleep 1
 
             echo "=== Install mitmproxy CA cert as system cert ==="

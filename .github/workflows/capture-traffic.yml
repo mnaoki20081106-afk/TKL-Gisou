@@ -1,0 +1,206 @@
+name: TKL Traffic Capture
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_path:
+        description: 'APK path in repo'
+        default: 'apk/clean_patched.apk'
+        required: false
+  push:
+    branches: [ claude/new-session-c9gvpt ]
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install mitmproxy
+        run: |
+          pip install mitmproxy
+          # Start once to generate CA cert, then stop
+          mitmdump --no-server &
+          sleep 4
+          kill %1 2>/dev/null || true
+          ls ~/.mitmproxy/
+          # Convert CA cert to Android system cert format
+          CERT_HASH=$(openssl x509 -inform PEM -subject_hash_old \
+            -in ~/.mitmproxy/mitmproxy-ca-cert.pem | head -1)
+          cp ~/.mitmproxy/mitmproxy-ca-cert.pem "${CERT_HASH}.0"
+          echo "CERT_HASH=$CERT_HASH" >> $GITHUB_ENV
+          echo "CERT_FILE=${CERT_HASH}.0" >> $GITHUB_ENV
+          echo "CA cert hash: $CERT_HASH"
+
+      - name: Install AVD system image (api-29)
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "platform-tools" \
+            "emulator" \
+            "system-images;android-29;default;x86_64"
+
+      - name: Create AVD
+        run: |
+          echo "no" | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd \
+            --name "capture_avd" \
+            --package "system-images;android-29;default;x86_64" \
+            --device "pixel_4" \
+            --force
+
+      - name: Capture traffic
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          target: default
+          arch: x86_64
+          avd-name: capture_avd
+          force-avd-creation: false
+          emulator-options: >-
+            -writable-system
+            -no-snapshot-save
+            -no-window
+            -gpu swiftshader_indirect
+            -noaudio
+            -no-boot-anim
+            -http-proxy http://127.0.0.1:8080
+          disable-animations: true
+          script: |
+            set -e
+            echo "=== Emulator ready ==="
+            adb devices
+
+            echo "=== adb root + remount ==="
+            adb root
+            sleep 2
+            adb remount
+            sleep 1
+
+            echo "=== Install mitmproxy CA cert as system cert ==="
+            adb push "${CERT_FILE}" "/system/etc/security/cacerts/${CERT_FILE}"
+            adb shell chmod 644 "/system/etc/security/cacerts/${CERT_FILE}"
+            adb shell ls -la /system/etc/security/cacerts/ | grep "${CERT_HASH}" || true
+
+            echo "=== Start mitmdump (background) ==="
+            mitmdump -w traffic.mitm \
+              --set ssl_insecure=true \
+              2>mitmdump_stderr.txt &
+            MITM_PID=$!
+            sleep 2
+
+            echo "=== Install patched APK ==="
+            APK_PATH="${{ github.event.inputs.apk_path || 'apk/clean_patched.apk' }}"
+            adb install -r "$APK_PATH" && echo "INSTALL_OK" || echo "INSTALL_FAIL"
+
+            echo "=== Clear logcat ==="
+            adb logcat -c
+
+            echo "=== Open invite URL ==="
+            adb shell am start \
+              -a android.intent.action.VIEW \
+              -d "https://lite.tiktok.com/t/ZS9y8Hn4KXRgV-6TKv1/"
+            sleep 5
+
+            echo "=== Launch app directly ==="
+            adb shell monkey \
+              -p com.zhiliaoapp.musically.go \
+              --pct-touch 50 \
+              --throttle 500 \
+              30 2>/dev/null || true
+            sleep 30
+
+            echo "=== TKL_UCODE in logcat ==="
+            adb logcat -d | grep "TKL_UCODE" || echo "TKL_UCODE not found"
+
+            echo "=== Save logcat ==="
+            adb logcat -d -t 500 > logcat_full.txt
+
+            echo "=== Stop mitmdump ==="
+            kill $MITM_PID 2>/dev/null || true
+            sleep 2
+            ls -lh traffic.mitm || echo "traffic.mitm missing"
+
+      - name: Parse mitmproxy traffic to JSON
+        if: always()
+        run: |
+          cat > parse_traffic.py << 'PYEOF'
+          import json, sys, os
+
+          output = []
+          if not os.path.exists("traffic.mitm"):
+              print("traffic.mitm not found")
+              json.dump([], open("parsed_requests.json", "w"))
+              sys.exit(0)
+
+          try:
+              from mitmproxy import io as mio
+              from mitmproxy.http import HTTPFlow
+
+              with open("traffic.mitm", "rb") as f:
+                  reader = mio.FlowReader(f)
+                  for flow in reader.stream():
+                      if not isinstance(flow, HTTPFlow):
+                          continue
+                      req = flow.request
+                      resp = flow.response
+
+                      def safe_text(data, max_bytes=4096):
+                          if data is None:
+                              return None
+                          try:
+                              return data[:max_bytes].decode("utf-8", errors="replace")
+                          except Exception:
+                              return data[:max_bytes].hex()
+
+                      entry = {
+                          "url": req.pretty_url,
+                          "method": req.method,
+                          "request_headers": dict(req.headers),
+                          "request_body": safe_text(req.content),
+                          "response_status": resp.status_code if resp else None,
+                          "response_headers": dict(resp.headers) if resp else {},
+                          "response_body": safe_text(resp.content) if resp else None,
+                      }
+                      output.append(entry)
+
+          except Exception as e:
+              output = [{"error": str(e)}]
+
+          with open("parsed_requests.json", "w", encoding="utf-8") as f:
+              json.dump(output, f, ensure_ascii=False, indent=2)
+
+          print(f"Parsed {len(output)} flows")
+          # Print unique hosts
+          hosts = sorted(set(e.get("url","").split("/")[2] for e in output if "url" in e))
+          print("Hosts seen:")
+          for h in hosts:
+              print(f"  {h}")
+          PYEOF
+          python3 parse_traffic.py
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: traffic-capture
+          path: |
+            parsed_requests.json
+            traffic.mitm
+            logcat_full.txt
+            mitmdump_stderr.txt

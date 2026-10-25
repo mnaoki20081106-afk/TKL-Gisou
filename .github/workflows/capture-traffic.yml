@@ -89,8 +89,8 @@ jobs:
             echo "=== adb root ==="
             adb root
             sleep 2
-            echo "=== mount /system rw ==="
-            adb shell mount -o remount,rw /system || true
+            echo "=== mount / rw (system-as-root on api-29) ==="
+            adb shell mount -o remount,rw / || true
             sleep 1
 
             echo "=== Install mitmproxy CA cert as system cert ==="

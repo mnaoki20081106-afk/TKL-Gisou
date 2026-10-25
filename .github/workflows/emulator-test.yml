@@ -1,0 +1,89 @@
+name: TKL Emulator Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  emulator-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install AVD components
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "emulator" \
+            "system-images;android-34;google_apis_playstore;x86_64"
+
+      - name: Create AVD
+        run: |
+          echo "no" | avdmanager create avd \
+            --name "test_avd" \
+            --package "system-images;android-34;google_apis_playstore;x86_64" \
+            --device "pixel_6"
+          echo "Created AVD"
+
+      - name: Start emulator and run tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis_playstore
+          arch: x86_64
+          avd-name: test_avd
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          disable-animations: true
+          script: |
+            echo "=== Emulator booted ==="
+            adb devices
+
+            echo "=== Install APK ==="
+            adb install -r apk/clean_patched.apk && echo "INSTALL_OK" || echo "INSTALL_FAIL"
+
+            echo "=== Clear logcat ==="
+            adb logcat -c
+
+            echo "=== Launch app ==="
+            adb shell am start -n com.zhiliaoapp.musically.go/com.zhiliaoapp.musically.go.mini.MiniApplication || true
+            sleep 5
+
+            echo "=== Open invite URL ==="
+            adb shell am start \
+              -a android.intent.action.VIEW \
+              -d "https://lite.tiktok.com/t/ZS9y8Hn4KXRgV-6TKv1/" \
+              com.zhiliaoapp.musically.go || true
+            sleep 15
+
+            echo "=== Logcat (TKL_UCODE) ==="
+            adb logcat -d | grep -i "TKL_UCODE" || echo "TKL_UCODE not found in logcat"
+
+            echo "=== Full logcat (last 200 lines) ==="
+            adb logcat -d -t 200 > logcat_full.txt
+            cat logcat_full.txt
+
+      - name: Upload logcat
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logcat
+          path: logcat_full.txt

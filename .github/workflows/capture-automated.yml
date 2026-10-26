@@ -17,6 +17,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
 
+    env:
+      FRIDA_VERSION: "16.5.6"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,13 +34,11 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y android-tools-adb
-          pip install mitmproxy frida-tools
-          FRIDA_VERSION=$(python3 -c "import frida; print(frida.__version__)")
-          echo "FRIDA_VERSION=$FRIDA_VERSION" >> $GITHUB_ENV
+          pip install mitmproxy "frida-tools==${FRIDA_VERSION}"
           wget -q "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-arm64.xz" \
             -O frida-server.xz
           xz -d frida-server.xz
-          mv frida-server-*-android-arm64 frida-server 2>/dev/null || true
+          mv frida-server-${FRIDA_VERSION}-android-arm64 frida-server 2>/dev/null || mv frida-server-*-android-arm64 frida-server 2>/dev/null || true
           chmod +x frida-server
           ls -lh frida-server
 
@@ -68,6 +69,30 @@ jobs:
             androidboot.hardware=redroid androidboot.use_memfd=true
           docker ps
 
+      - name: Load NAT kernel modules
+        run: |
+          echo "=== current kernel ==="
+          uname -r
+          echo "=== lsmod before ==="
+          lsmod | grep -E 'nat|conntrack|redirect' || echo "(none loaded)"
+
+          # iptables-legacy nat table needs iptable_nat (which pulls in nf_nat + nf_conntrack)
+          sudo modprobe nf_conntrack && echo "nf_conntrack: OK" || echo "nf_conntrack: FAILED $?"
+          sudo modprobe nf_nat && echo "nf_nat: OK" || echo "nf_nat: FAILED $?"
+          sudo modprobe iptable_nat && echo "iptable_nat: OK" || echo "iptable_nat: FAILED $?"
+          sudo modprobe xt_REDIRECT && echo "xt_REDIRECT: OK" || echo "xt_REDIRECT: FAILED $?"
+
+          echo "=== lsmod after ==="
+          lsmod | grep -E 'nat|conntrack|redirect' || echo "(none loaded)"
+
+          # Switch to legacy iptables
+          sudo update-alternatives --set iptables /usr/sbin/iptables-legacy
+          sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+          iptables --version
+
+          # Test nat table access
+          sudo iptables -t nat -L -n && echo "nat table: OK" || echo "nat table: FAILED"
+
       - name: Wait for Android boot
         run: |
           sleep 5
@@ -95,9 +120,9 @@ jobs:
             sleep 1
           done
 
-          # Block QUIC to force TCP/TLS
+          # Block QUIC to force TCP/TLS (may fail in container; that's OK)
           adb -s localhost:5555 shell iptables -A OUTPUT -p udp --dport 443 -j DROP || true
-          echo "QUIC blocked"
+          echo "QUIC block attempted"
 
           # Install mitmproxy cert as user CA
           adb -s localhost:5555 shell mkdir -p /data/misc/user/0/cacerts-added
@@ -110,28 +135,16 @@ jobs:
           adb -s localhost:5555 shell chmod 755 /data/local/tmp/frida-server
           adb -s localhost:5555 shell "/data/local/tmp/frida-server &"
           sleep 3
-          adb -s localhost:5555 shell ps -A 2>/dev/null | grep -i frida || echo "frida-server: check failed (may still be running)"
+          adb -s localhost:5555 shell ps -A 2>/dev/null | grep -i frida || echo "frida-server: not visible in ps (may still be running)"
 
           # Install APK
           adb -s localhost:5555 install -r apk/clean_patched.apk && echo "APK INSTALLED" || echo "APK INSTALL FAILED"
 
       - name: Setup transparent proxy
         run: |
-          # Load kernel modules required for NAT/REDIRECT
-          sudo modprobe xt_REDIRECT 2>/dev/null || true
-          sudo modprobe nf_nat 2>/dev/null || true
-          sudo modprobe xt_conntrack 2>/dev/null || true
-
-          # Switch iptables to legacy backend (nf_tables doesn't support REDIRECT in nat)
-          sudo update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null || true
-          sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null || true
-
           ANDROID_IP=$(docker inspect redroid11 --format '{{.NetworkSettings.IPAddress}}')
           echo "Android container IP: $ANDROID_IP"
           echo "ANDROID_IP=$ANDROID_IP" >> $GITHUB_ENV
-
-          # Verify iptables backend
-          iptables --version
 
           # Redirect Android's TCP 443 and 80 to mitmdump on host port 8080
           sudo iptables -t nat -A PREROUTING -s "$ANDROID_IP" -p tcp --dport 443 -j REDIRECT --to-port 8080
@@ -139,7 +152,7 @@ jobs:
           sudo iptables -t nat -L PREROUTING -n
           echo "iptables PREROUTING rules set"
 
-          # Start mitmdump in transparent mode, write to file
+          # Start mitmdump in transparent mode
           mitmdump --mode transparent \
             --ssl-insecure \
             --listen-port 8080 \

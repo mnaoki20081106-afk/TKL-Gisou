@@ -127,9 +127,11 @@ jobs:
             && echo "APK INSTALLED" || echo "APK INSTALL FAILED (continuing)"
 
           echo "=== TikTok Lite intent filters (pm dump) ==="
-          timeout 10 adb -s localhost:5555 shell pm dump com.zhiliaoapp.musically.go 2>/dev/null \
-            | grep -E -A2 'ACTION_VIEW|snssdk|aweme|roma_redirect|scheme|intentsFilter' \
-            | head -300 || echo "(pm dump failed)"
+          adb -s localhost:5555 shell "timeout 25 pm dump com.zhiliaoapp.musically.go 2>/dev/null" \
+            > pm_dump_full.txt 2>/dev/null || true
+          echo "pm_dump_full.txt: $(wc -l < pm_dump_full.txt 2>/dev/null || echo 0) lines"
+          grep -E 'snssdk|aweme|roma_redirect|roma|browser|webview|Scheme|Host|Path|Activity|ACTION_VIEW' \
+            pm_dump_full.txt | head -400 || echo "(pm dump grep empty)"
 
       - name: Setup transparent proxy
         run: |
@@ -167,9 +169,11 @@ jobs:
         run: |
           INVITE_URL="${{ github.event.inputs.invite_url }}"
           echo "Opening: $INVITE_URL"
+          # Force TikTok Lite to handle the URL in its own WebView (bypasses default browser)
           adb -s localhost:5555 shell am start \
             -a android.intent.action.VIEW \
-            -d "$INVITE_URL"
+            -d "$INVITE_URL" \
+            --package com.zhiliaoapp.musically.go
 
           echo "Waiting 40s for WebView to render invite page..."
           sleep 40
@@ -247,4 +251,5 @@ jobs:
             mitmdump.log
             ui_dump.xml
             ui_dump2.xml
+            pm_dump_full.txt
           retention-days: 7

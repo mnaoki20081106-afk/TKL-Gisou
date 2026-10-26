@@ -64,6 +64,21 @@ jobs:
           mv frida-server-*-android-arm64 frida-server || true
           ls -lh frida-server
 
+      - name: Install Android cmdline-tools
+        run: |
+          CMDLINE_TOOLS_VERSION=15859902
+          CMDLINE_TOOLS_SHA256=4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583
+          wget -q "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip" \
+            -O cmdline-tools.zip
+          echo "${CMDLINE_TOOLS_SHA256}  cmdline-tools.zip" | sha256sum -c
+          mkdir -p $HOME/android-sdk/cmdline-tools
+          unzip -q cmdline-tools.zip -d $HOME/android-sdk/cmdline-tools/
+          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+          $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --version
+
       - name: Install AVD system image (api-30 google_apis arm64)
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true

@@ -289,7 +289,14 @@ jobs:
           grep -a -A 60 'passport/account/info' traffic.txt | head -150 || echo "(not found)"
 
           echo "=== device_register response (full block) ==="
-          grep -a -A 40 'device_register' traffic.txt | head -100 || echo "(not found)"
+          grep -a -A 60 'device_register' traffic.txt | head -400 || echo "(not found)"
+
+          echo "=== feed/initial response (full block) ==="
+          grep -a -A 60 'feed/initial' traffic.txt | head -300 || echo "(not found)"
+
+          echo "=== region/availability fields across all responses ==="
+          grep -aE '(store_region|app_region|geo_block|is_available|region_code|region_check|not.*available|TikTok.*Lite.*available|"region"|"country")' traffic.txt \
+            | head -150 || echo "(no region fields)"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

@@ -72,7 +72,7 @@ def main():
             for k, v in r.headers.items():
                 print(f"  {k}: {v[:200]}")
             print("--- Response body ---")
-            print(fmt_body(r.content, limit=5000))
+            print(fmt_body(r.content, limit=12000))
 
 
 if __name__ == "__main__":

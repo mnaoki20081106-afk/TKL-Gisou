@@ -48,6 +48,12 @@ jobs:
           echo "CERT_FILE=${CERT_HASH}.0" >> $GITHUB_ENV
           echo "CA cert hash: $CERT_HASH"
 
+      - name: Patch APK with apk-mitm (NSC + OkHttp unpinner)
+        run: |
+          npm install -g apk-mitm
+          apk-mitm apk/clean_patched.apk
+          ls -lh apk/
+
       - name: Install AVD system image (api-29)
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
@@ -90,28 +96,11 @@ jobs:
             adb root
             sleep 2
 
-            echo "=== disable-verity + reboot (dm-verity blocks rw mount) ==="
-            adb disable-verity || true
-            adb reboot
-            sleep 10
-            adb wait-for-device
-            for i in $(seq 1 30); do
-              result=$(adb shell getprop sys.boot_completed 2>/dev/null || echo "")
-              [ "$result" = "1" ] && { echo "Boot completed"; break; }
-              sleep 3
-            done
-            adb root
-            sleep 2
-
-            echo "=== mount / rw ==="
-            adb shell mount -o remount,rw / || true
-            adb shell mount -o remount,rw /system || true
-            sleep 1
-
-            echo "=== Install mitmproxy CA cert as system cert ==="
-            adb push "${CERT_FILE}" "/system/etc/security/cacerts/${CERT_FILE}"
-            adb shell chmod 644 "/system/etc/security/cacerts/${CERT_FILE}"
-            adb shell ls -la /system/etc/security/cacerts/ | grep "${CERT_HASH}" || true
+            echo "=== Install mitmproxy CA cert as user cert ==="
+            adb shell mkdir -p /data/misc/user/0/cacerts-added
+            adb push "${CERT_FILE}" "/data/misc/user/0/cacerts-added/${CERT_FILE}"
+            adb shell chmod 644 "/data/misc/user/0/cacerts-added/${CERT_FILE}"
+            adb shell ls -la /data/misc/user/0/cacerts-added/ | grep "${CERT_HASH}" || true
 
             echo "=== Start mitmdump (background) ==="
             mitmdump -w traffic.mitm \
@@ -121,8 +110,7 @@ jobs:
             sleep 2
 
             echo "=== Install patched APK ==="
-            APK_PATH="${{ github.event.inputs.apk_path || 'apk/clean_patched.apk' }}"
-            adb install -r "$APK_PATH" && echo "INSTALL_OK" || echo "INSTALL_FAIL"
+            adb install -r "apk/clean_patched-patched.apk" && echo "INSTALL_OK" || echo "INSTALL_FAIL"
 
             echo "=== Clear logcat ==="
             adb logcat -c

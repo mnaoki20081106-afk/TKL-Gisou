@@ -159,7 +159,6 @@ jobs:
           frida -U \
             -n com.zhiliaoapp.musically.go \
             -l frida-scripts/tiktok-ssl-bypass.js \
-            --no-pause \
             > frida.log 2>&1 &
           echo "FRIDA_PID=$!" >> $GITHUB_ENV
           echo "Frida attached, waiting 15s..."

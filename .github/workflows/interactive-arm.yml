@@ -102,9 +102,18 @@ jobs:
 
       - name: Setup device (frida-server, cert, APK, QUIC block)
         run: |
+          # adb root restarts adbd; disconnect+reconnect is more reliable than wait-for-device
           adb -s localhost:5555 root || true
-          adb -s localhost:5555 wait-for-device
+          sleep 3
+          adb disconnect localhost:5555 || true
           sleep 1
+          for i in $(seq 1 30); do
+            adb connect localhost:5555 2>/dev/null || true
+            state=$(adb -s localhost:5555 get-state 2>/dev/null | tr -d '\r')
+            echo "  reconnect $i: '$state'"
+            [ "$state" = "device" ] && break
+            sleep 1
+          done
 
           adb -s localhost:5555 shell iptables -A OUTPUT -p udp --dport 443 -j DROP || true
 

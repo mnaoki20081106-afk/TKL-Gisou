@@ -41,12 +41,10 @@ jobs:
       - name: Install mitmproxy
         run: |
           pip install mitmproxy
-          # Start once to generate CA cert, then stop
           mitmdump --no-server &
           sleep 4
           kill %1 2>/dev/null || true
           ls ~/.mitmproxy/
-          # Convert CA cert to Android system cert format
           CERT_HASH=$(openssl x509 -inform PEM -subject_hash_old \
             -in ~/.mitmproxy/mitmproxy-ca-cert.pem | head -1)
           cp ~/.mitmproxy/mitmproxy-ca-cert.pem "${CERT_HASH}.0"
@@ -66,27 +64,27 @@ jobs:
           mv frida-server-*-android-x86_64 frida-server || true
           ls -lh frida-server
 
-      - name: Install AVD system image (api-29)
+      - name: Install AVD system image (api-30 google_apis)
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
             "emulator" \
-            "system-images;android-29;default;x86_64"
+            "system-images;android-30;google_apis;x86_64"
 
       - name: Create AVD
         run: |
           echo "no" | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd \
             --name "capture_avd" \
-            --package "system-images;android-29;default;x86_64" \
+            --package "system-images;android-30;google_apis;x86_64" \
             --device "pixel_4" \
             --force
 
       - name: Capture traffic
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 29
-          target: default
+          api-level: 30
+          target: google_apis
           arch: x86_64
           avd-name: capture_avd
           force-avd-creation: false
@@ -107,6 +105,9 @@ jobs:
             echo "=== adb root ==="
             adb root
             sleep 2
+
+            echo "=== Block QUIC (UDP 443) to force TCP/TLS ==="
+            adb shell iptables -A OUTPUT -p udp --dport 443 -j DROP || echo "iptables QUIC block failed (non-fatal)"
 
             echo "=== Install mitmproxy CA cert as user cert ==="
             adb shell mkdir -p /data/misc/user/0/cacerts-added
@@ -206,7 +207,6 @@ jobs:
               json.dump(output, f, ensure_ascii=False, indent=2)
 
           print(f"Parsed {len(output)} flows")
-          # Print unique hosts
           hosts = sorted(set(e.get("url","").split("/")[2] for e in output if "url" in e))
           print("Hosts seen:")
           for h in hosts:

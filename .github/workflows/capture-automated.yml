@@ -158,7 +158,7 @@ jobs:
           echo "=== Early Frida log ==="
           cat frida.log || true
 
-      - name: Open invite URL + tap accept + aweme deeplink
+      - name: Open invite URL + deeplink + accept
         run: |
           INVITE_URL="${{ github.event.inputs.invite_url }}"
           echo "Opening: $INVITE_URL"
@@ -166,26 +166,30 @@ jobs:
             -a android.intent.action.VIEW \
             -d "$INVITE_URL"
 
-          echo "Waiting 40s for WebView to render..."
+          echo "Waiting 40s for WebView to render invite page..."
           sleep 40
 
-          echo "=== UI dump ==="
+          echo "=== UI dump 1 (WebView invite page) ==="
           adb -s localhost:5555 shell uiautomator dump /sdcard/ui_dump.xml 2>&1 || true
           adb -s localhost:5555 pull /sdcard/ui_dump.xml ui_dump.xml 2>/dev/null \
             && echo "ui_dump.xml pulled" || echo "ui_dump pull failed"
 
-          echo "=== Parsing UI and attempting tap ==="
+          echo "=== Phase 1: extract snssdk deeplink ==="
           python3 scripts/tap-ui.py ui_dump.xml
 
-          echo "Waiting 60s for native processing after tap..."
-          sleep 60
+          echo "Waiting 20s for TikTok Lite reward screen..."
+          sleep 20
 
-          echo "=== Trying aweme deeplink directly ==="
-          adb -s localhost:5555 shell am start \
-            -a android.intent.action.VIEW \
-            -d "aweme://roma_redirect/?spark_page=scan_code" 2>&1 || true
-          echo "Waiting 15s after aweme deeplink..."
-          sleep 15
+          echo "=== UI dump 2 (TikTok Lite reward screen) ==="
+          adb -s localhost:5555 shell uiautomator dump /sdcard/ui_dump2.xml 2>&1 || true
+          adb -s localhost:5555 pull /sdcard/ui_dump2.xml ui_dump2.xml 2>/dev/null \
+            && echo "ui_dump2.xml pulled" || echo "ui_dump2 pull failed"
+
+          echo "=== Phase 2: tap accept button in TikTok Lite ==="
+          python3 scripts/tap-ui.py ui_dump2.xml
+
+          echo "Waiting 30s for API call after accept tap..."
+          sleep 30
 
           echo "Capture window done"
 
@@ -216,11 +220,14 @@ jobs:
           echo "=== logcat TIKTOK_SSL ==="
           timeout 10 adb -s localhost:5555 logcat -d -s TIKTOK_SSL_PINNING_BYPASS 2>/dev/null || true
 
-          echo "=== UI dump (all text nodes) ==="
+          echo "=== UI dump 1 (all text nodes) ==="
           python3 scripts/dump-ui.py ui_dump.xml 2>/dev/null || echo "(no ui_dump.xml)"
 
+          echo "=== UI dump 2 (all text nodes) ==="
+          python3 scripts/dump-ui.py ui_dump2.xml 2>/dev/null || echo "(no ui_dump2.xml)"
+
           echo "=== Key traffic paths ==="
-          grep -E '(KEY|incentive|mentor|invite|referral|pro_scan|linker|passport|ZS9y8|device_register|webid)' traffic.txt \
+          grep -E '(KEY|incentive|mentor|invite|referral|pro_scan|linker|passport|ZS9y8|device_register|webid|roma_redirect)' traffic.txt \
             | head -200 || echo "(no key paths matched)"
 
       - name: Upload artifacts
@@ -234,4 +241,5 @@ jobs:
             frida.log
             mitmdump.log
             ui_dump.xml
+            ui_dump2.xml
           retention-days: 7

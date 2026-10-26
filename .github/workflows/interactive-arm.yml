@@ -103,8 +103,9 @@ jobs:
 
       - name: Setup device (frida-server, cert, APK, QUIC block)
         run: |
-          adb -s localhost:5555 root
-          sleep 2
+          adb -s localhost:5555 root || true
+          adb -s localhost:5555 wait-for-device
+          sleep 1
 
           adb -s localhost:5555 shell iptables -A OUTPUT -p udp --dport 443 -j DROP || true
 

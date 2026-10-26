@@ -196,11 +196,10 @@ jobs:
           echo "=== traffic.mitm size ==="
           ls -lh traffic.mitm 2>/dev/null || echo "(no file)"
 
-          echo "=== UI dump (all text) ==="
-          python3 scripts/dump-ui.py ui_dump.xml 2>/dev/null || echo "(no ui_dump.xml)"
-
-          echo "=== Full traffic dump (URLs + key bodies) ==="
-          python3 scripts/dump-traffic.py traffic.mitm 2>&1 | tee traffic.txt || echo "(dump failed)"
+          echo "=== Full traffic dump -> traffic.txt (silent) ==="
+          python3 scripts/dump-traffic.py traffic.mitm > traffic.txt 2>&1 \
+            && echo "dump OK: $(wc -l < traffic.txt) lines" \
+            || echo "(dump failed)"
 
           echo "=== Frida log ==="
           cat frida.log || true
@@ -213,6 +212,13 @@ jobs:
 
           echo "=== logcat TIKTOK_SSL ==="
           adb -s localhost:5555 logcat -d -s TIKTOK_SSL_PINNING_BYPASS 2>/dev/null || true
+
+          echo "=== UI dump (all text nodes) ==="
+          python3 scripts/dump-ui.py ui_dump.xml 2>/dev/null || echo "(no ui_dump.xml)"
+
+          echo "=== Key traffic paths ==="
+          grep -E '(KEY|incentive|mentor|invite|referral|pro_scan|linker|passport|ZS9y8|device_register|webid)' traffic.txt \
+            | head -200 || echo "(no key paths matched)"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

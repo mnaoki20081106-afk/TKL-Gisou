@@ -106,17 +106,19 @@ jobs:
             [ "$state" = "device" ] && break
             sleep 1
           done
+          echo "Final adb state: $(adb -s localhost:5555 get-state 2>/dev/null || echo unknown)"
 
           adb -s localhost:5555 shell iptables -A OUTPUT -p udp --dport 443 -j DROP || true
           echo "QUIC block attempted"
 
-          adb -s localhost:5555 shell mkdir -p /data/misc/user/0/cacerts-added
-          adb -s localhost:5555 push "${CERT_FILE}" "/data/misc/user/0/cacerts-added/${CERT_FILE}"
-          adb -s localhost:5555 shell chmod 644 "/data/misc/user/0/cacerts-added/${CERT_FILE}"
-          echo "Cert pushed"
+          adb -s localhost:5555 shell mkdir -p /data/misc/user/0/cacerts-added || true
+          adb -s localhost:5555 push "${CERT_FILE}" "/data/misc/user/0/cacerts-added/${CERT_FILE}" \
+            && echo "CERT PUSH: PASS" || echo "CERT PUSH: FAIL"
+          adb -s localhost:5555 shell chmod 644 "/data/misc/user/0/cacerts-added/${CERT_FILE}" || true
 
-          adb -s localhost:5555 push frida-server /data/local/tmp/frida-server
-          adb -s localhost:5555 shell chmod 755 /data/local/tmp/frida-server
+          adb -s localhost:5555 push frida-server /data/local/tmp/frida-server \
+            && echo "FRIDA PUSH: PASS" || echo "FRIDA PUSH: FAIL"
+          adb -s localhost:5555 shell chmod 755 /data/local/tmp/frida-server || true
           adb -s localhost:5555 shell /data/local/tmp/frida-server &
           sleep 3
           adb -s localhost:5555 shell ps -A 2>/dev/null | grep -i frida || echo "frida-server: not in ps"

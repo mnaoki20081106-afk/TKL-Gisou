@@ -7,10 +7,6 @@ on:
         description: 'TikTok Lite invite URL'
         required: false
         default: 'https://lite.tiktok.com/t/ZS9y8Hn4KXRgV-6TKv1/'
-      wait_seconds:
-        description: 'Seconds to capture after opening URL'
-        required: false
-        default: '120'
 
 jobs:
   capture:
@@ -121,7 +117,6 @@ jobs:
 
           adb -s localhost:5555 push frida-server /data/local/tmp/frida-server
           adb -s localhost:5555 shell chmod 755 /data/local/tmp/frida-server
-          # Background the adb shell so frida-server doesn't block
           adb -s localhost:5555 shell /data/local/tmp/frida-server &
           sleep 3
           adb -s localhost:5555 shell ps -A 2>/dev/null | grep -i frida || echo "frida-server: not in ps"
@@ -160,7 +155,7 @@ jobs:
           echo "=== Early Frida log ==="
           cat frida.log || true
 
-      - name: Open invite URL
+      - name: Open invite URL + tap accept + aweme deeplink
         run: |
           INVITE_URL="${{ github.event.inputs.invite_url }}"
           echo "Opening: $INVITE_URL"
@@ -168,9 +163,62 @@ jobs:
             -a android.intent.action.VIEW \
             -d "$INVITE_URL"
 
-          WAIT=${{ github.event.inputs.wait_seconds }}
-          echo "Capturing for ${WAIT}s..."
-          sleep "$WAIT"
+          echo "Waiting 40s for WebView to render..."
+          sleep 40
+
+          echo "=== UI dump ==="
+          adb -s localhost:5555 shell uiautomator dump /sdcard/ui_dump.xml 2>&1 || true
+          adb -s localhost:5555 pull /sdcard/ui_dump.xml ui_dump.xml 2>/dev/null && \
+            echo "ui_dump.xml pulled ($(wc -c < ui_dump.xml)b)" || echo "ui_dump pull failed"
+
+          echo "=== Parsing UI and attempting tap ==="
+          python3 - <<'PYEOF'
+import subprocess, sys, re
+try:
+    import xml.etree.ElementTree as ET
+    tree = ET.parse("ui_dump.xml")
+except Exception as e:
+    print(f"[!] XML parse failed: {e}")
+    sys.exit(0)
+
+KEYWORDS = ["コイン", "受け取", "accept", "claim", "start", "始め", "参加",
+            "ポイント", "get", "scan", "今すぐ", "利用", "開く", "open"]
+
+hits = []
+print("=== All text nodes ===")
+for node in tree.iter("node"):
+    text = ((node.get("text") or "") + " " + (node.get("content-desc") or "")).strip()
+    bounds = node.get("bounds", "")
+    clickable = node.get("clickable") == "true"
+    if text:
+        print(f"  {'[TAP]' if clickable else '[txt]'} {text!r:60s} {bounds}")
+    if bounds and any(k.lower() in text.lower() for k in KEYWORDS):
+        m = re.findall(r'\d+', bounds)
+        if len(m) == 4:
+            x = (int(m[0]) + int(m[2])) // 2
+            y = (int(m[1]) + int(m[3])) // 2
+            hits.append((text, x, y, clickable))
+
+print()
+if hits:
+    text, x, y, _ = hits[0]
+    print(f"[*] Keyword match: {text!r} -> tapping ({x},{y})")
+    subprocess.run(["adb", "-s", "localhost:5555", "shell", f"input tap {x} {y}"], check=False)
+    print("[*] Tap sent")
+else:
+    print("[!] No keyword match in UI — skipping tap (check ui_dump.xml artifact)")
+PYEOF
+
+          echo "Waiting 60s for native processing after tap..."
+          sleep 60
+
+          echo "=== Trying aweme deeplink directly ==="
+          adb -s localhost:5555 shell am start \
+            -a android.intent.action.VIEW \
+            -d "aweme://roma_redirect/?spark_page=scan_code" 2>&1 || true
+          echo "Waiting 15s after aweme deeplink..."
+          sleep 15
+
           echo "Capture window done"
 
       - name: Stop capture + dump results
@@ -182,6 +230,20 @@ jobs:
 
           echo "=== traffic.mitm size ==="
           ls -lh traffic.mitm 2>/dev/null || echo "(no file)"
+
+          echo "=== UI dump (all text) ==="
+          python3 - <<'PYEOF'
+import sys
+try:
+    import xml.etree.ElementTree as ET
+    for node in ET.parse("ui_dump.xml").iter("node"):
+        t = ((node.get("text") or "") + " " + (node.get("content-desc") or "")).strip()
+        if t:
+            c = "[TAP]" if node.get("clickable") == "true" else "[txt]"
+            print(f"  {c} {t!r} {node.get('bounds','')}")
+except Exception as e:
+    print(f"(ui_dump parse error: {e})")
+PYEOF
 
           echo "=== Full traffic dump (URLs + key bodies) ==="
           python3 scripts/dump-traffic.py traffic.mitm 2>&1 | tee traffic.txt || echo "(dump failed)"
@@ -208,4 +270,5 @@ jobs:
             traffic.txt
             frida.log
             mitmdump.log
+            ui_dump.xml
           retention-days: 7

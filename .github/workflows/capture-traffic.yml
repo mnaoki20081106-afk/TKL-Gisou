@@ -12,7 +12,7 @@ on:
 
 jobs:
   capture:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
 
     steps:
@@ -30,7 +30,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          ls -la /dev/kvm
+          ls -la /dev/kvm || echo "KVM not available"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -58,25 +58,25 @@ jobs:
           FRIDA_VERSION=$(python3 -c "import frida; print(frida.__version__)")
           echo "FRIDA_VERSION=$FRIDA_VERSION" >> $GITHUB_ENV
           echo "Frida version: $FRIDA_VERSION"
-          wget -q "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-x86_64.xz" \
+          wget -q "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-arm64.xz" \
             -O frida-server.xz
           xz -d frida-server.xz
-          mv frida-server-*-android-x86_64 frida-server || true
+          mv frida-server-*-android-arm64 frida-server || true
           ls -lh frida-server
 
-      - name: Install AVD system image (api-30 google_apis)
+      - name: Install AVD system image (api-30 google_apis arm64)
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
             "emulator" \
-            "system-images;android-30;google_apis;x86_64"
+            "system-images;android-30;google_apis;arm64-v8a"
 
       - name: Create AVD
         run: |
           echo "no" | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd \
             --name "capture_avd" \
-            --package "system-images;android-30;google_apis;x86_64" \
+            --package "system-images;android-30;google_apis;arm64-v8a" \
             --device "pixel_4" \
             --force
 
@@ -85,11 +85,10 @@ jobs:
         with:
           api-level: 30
           target: google_apis
-          arch: x86_64
+          arch: arm64-v8a
           avd-name: capture_avd
           force-avd-creation: false
           emulator-options: >-
-            -writable-system
             -no-snapshot-save
             -no-window
             -gpu swiftshader_indirect
@@ -176,8 +175,7 @@ jobs:
               with open("traffic.mitm", "rb") as f:
                   reader = mio.FlowReader(f)
                   for flow in reader.stream():
-                      if not isinstance(flow, HTTPFlow):
-                          continue
+                      if not isinstance(flow, HTTPFlow):                          continue
                       req = flow.request
                       resp = flow.response
 

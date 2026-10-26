@@ -25,12 +25,12 @@ jobs:
           git checkout origin/claude/new-session-c9gvpt -- apk/clean_patched.apk
           ls -lh apk/
 
-      - name: Enable KVM
+      - name: Enable KVM (best-effort)
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          ls -la /dev/kvm || echo "KVM not available"
+          sudo udevadm trigger --name-match=kvm || true
+          ls -la /dev/kvm && echo "KVM available" || echo "KVM not available - will use TCG"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -175,7 +175,8 @@ jobs:
               with open("traffic.mitm", "rb") as f:
                   reader = mio.FlowReader(f)
                   for flow in reader.stream():
-                      if not isinstance(flow, HTTPFlow):                          continue
+                      if not isinstance(flow, HTTPFlow):
+                          continue
                       req = flow.request
                       resp = flow.response
 

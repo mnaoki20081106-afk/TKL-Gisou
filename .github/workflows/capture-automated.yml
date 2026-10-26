@@ -121,7 +121,7 @@ jobs:
 
           adb -s localhost:5555 push frida-server /data/local/tmp/frida-server
           adb -s localhost:5555 shell chmod 755 /data/local/tmp/frida-server
-          # Background the adb shell so frida-server (which runs until killed) doesn't block
+          # Background the adb shell so frida-server doesn't block
           adb -s localhost:5555 shell /data/local/tmp/frida-server &
           sleep 3
           adb -s localhost:5555 shell ps -A 2>/dev/null | grep -i frida || echo "frida-server: not in ps"
@@ -150,21 +150,16 @@ jobs:
           echo "mitmdump started"
           cat mitmdump.log || true
 
-      - name: Launch TikTok Lite + attach Frida
+      - name: Spawn TikTok Lite + inject Frida
         run: |
-          adb -s localhost:5555 shell monkey -p com.zhiliaoapp.musically.go -c android.intent.category.LAUNCHER 1 2>/dev/null || true
-          echo "TikTok Lite launched"
-          sleep 8
-
-          frida -U \
-            -n com.zhiliaoapp.musically.go \
-            -l frida-scripts/tiktok-ssl-bypass.js \
-            > frida.log 2>&1 &
+          # Python script: device.spawn() -> attach() -> load() -> resume()
+          # This avoids all frida CLI flag issues and race conditions
+          python3 frida-scripts/spawn-inject.py > frida.log 2>&1 &
           echo "FRIDA_PID=$!" >> $GITHUB_ENV
-          echo "Frida attached, waiting 15s..."
-          sleep 15
+          echo "Frida spawning TikTok Lite, waiting 20s for app to init..."
+          sleep 20
 
-          echo "=== Frida log ==="
+          echo "=== Early Frida log ==="
           cat frida.log || true
 
       - name: Open invite URL

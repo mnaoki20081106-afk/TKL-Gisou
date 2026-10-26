@@ -126,12 +126,21 @@ jobs:
           adb -s localhost:5555 install -r apk/clean_patched.apk \
             && echo "APK INSTALLED" || echo "APK INSTALL FAILED (continuing)"
 
-          echo "=== TikTok Lite intent filters (pm dump) ==="
-          adb -s localhost:5555 shell "timeout 25 pm dump com.zhiliaoapp.musically.go 2>/dev/null" \
+          echo "=== TikTok Lite intent filters (dumpsys package) ==="
+          adb -s localhost:5555 shell "timeout 25 dumpsys package com.zhiliaoapp.musically.go 2>/dev/null" \
             > pm_dump_full.txt 2>/dev/null || true
           echo "pm_dump_full.txt: $(wc -l < pm_dump_full.txt 2>/dev/null || echo 0) lines"
-          grep -E 'snssdk|aweme|roma_redirect|roma|browser|webview|Scheme|Host|Path|Activity|ACTION_VIEW' \
-            pm_dump_full.txt | head -400 || echo "(pm dump grep empty)"
+          grep -E 'snssdk|aweme|roma|browser|webview|Scheme:|Host:|Path:|mActivities|ACTION_VIEW|BROWSABLE' \
+            pm_dump_full.txt | head -400 || echo "(dumpsys grep empty)"
+
+          echo "=== Force App Link routing to TikTok Lite ==="
+          adb -s localhost:5555 shell pm set-app-link com.zhiliaoapp.musically.go always \
+            && echo "set-app-link always: OK" || echo "set-app-link always: failed (expected on API 30)"
+          adb -s localhost:5555 shell pm set-app-links --package com.zhiliaoapp.musically.go 0 all \
+            && echo "set-app-links 0 all: OK" || echo "set-app-links 0 all: failed (OK)"
+          adb -s localhost:5555 shell pm get-app-links com.zhiliaoapp.musically.go 2>/dev/null \
+            || adb -s localhost:5555 shell pm get-app-link com.zhiliaoapp.musically.go 2>/dev/null \
+            || echo "get-app-link: not available"
 
       - name: Setup transparent proxy
         run: |
@@ -169,11 +178,13 @@ jobs:
         run: |
           INVITE_URL="${{ github.event.inputs.invite_url }}"
           echo "Opening: $INVITE_URL"
-          # Force TikTok Lite to handle the URL in its own WebView (bypasses default browser)
-          adb -s localhost:5555 shell am start \
+          # BROWSABLE category required for App Link matching; package name at end (not --package)
+          adb -s localhost:5555 shell am start -W \
             -a android.intent.action.VIEW \
+            -c android.intent.category.BROWSABLE \
             -d "$INVITE_URL" \
-            --package com.zhiliaoapp.musically.go
+            com.zhiliaoapp.musically.go \
+            && echo "am start: OK" || echo "am start: failed (continuing)"
 
           echo "Waiting 40s for WebView to render invite page..."
           sleep 40
@@ -184,7 +195,7 @@ jobs:
             && echo "ui_dump.xml pulled" || echo "ui_dump pull failed"
 
           echo "=== Phase 1: extract snssdk deeplink ==="
-          python3 scripts/tap-ui.py ui_dump.xml
+          python3 scripts/tap-ui.py ui_dump.xml || true
 
           echo "Waiting 20s for TikTok Lite reward screen..."
           sleep 20
@@ -195,7 +206,7 @@ jobs:
             && echo "ui_dump2.xml pulled" || echo "ui_dump2 pull failed"
 
           echo "=== Phase 2: tap accept button in TikTok Lite ==="
-          python3 scripts/tap-ui.py ui_dump2.xml
+          python3 scripts/tap-ui.py ui_dump2.xml || true
 
           echo "Waiting 30s for API call after accept tap..."
           sleep 30

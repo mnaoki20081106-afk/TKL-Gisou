@@ -121,7 +121,8 @@ jobs:
           sleep 3
           adb -s localhost:5555 shell ps -A 2>/dev/null | grep -i frida || echo "frida-server: not in ps"
 
-          adb -s localhost:5555 install -r apk/clean_patched.apk && echo "APK INSTALLED" || echo "APK INSTALL FAILED"
+          adb -s localhost:5555 install -r apk/clean_patched.apk \
+            && echo "APK INSTALLED" || echo "APK INSTALL FAILED (continuing)"
 
       - name: Setup transparent proxy
         run: |
@@ -208,10 +209,10 @@ jobs:
           tail -50 mitmdump.log || true
 
           echo "=== logcat TKL_UCODE ==="
-          adb -s localhost:5555 logcat -d -s TKL_UCODE 2>/dev/null || true
+          timeout 10 adb -s localhost:5555 logcat -d -s TKL_UCODE 2>/dev/null || true
 
           echo "=== logcat TIKTOK_SSL ==="
-          adb -s localhost:5555 logcat -d -s TIKTOK_SSL_PINNING_BYPASS 2>/dev/null || true
+          timeout 10 adb -s localhost:5555 logcat -d -s TIKTOK_SSL_PINNING_BYPASS 2>/dev/null || true
 
           echo "=== UI dump (all text nodes) ==="
           python3 scripts/dump-ui.py ui_dump.xml 2>/dev/null || echo "(no ui_dump.xml)"

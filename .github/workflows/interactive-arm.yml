@@ -31,7 +31,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y tmate android-tools-adb
+          sudo apt-get install -y tmate android-tools-adb netcat-openbsd
 
           pip install mitmproxy frida-tools
           FRIDA_VERSION=$(python3 -c "import frida; print(frida.__version__)")
@@ -102,7 +102,6 @@ jobs:
 
       - name: Setup device (frida-server, cert, APK, QUIC block)
         run: |
-          # adb root restarts adbd; disconnect+reconnect is more reliable than wait-for-device
           adb -s localhost:5555 root || true
           sleep 3
           adb disconnect localhost:5555 || true
@@ -131,12 +130,33 @@ jobs:
 
       - name: Start tmate session
         run: |
-          tmate -S /tmp/tmate.sock new-session -d
-          tmate -S /tmp/tmate.sock wait tmate-ready
-          sleep 5
+          # Check tmate.io connectivity
+          echo "Checking tmate.io connectivity..."
+          nc -zv ssh.tmate.io 22 -w 5 2>&1 && echo "port 22: OK" || echo "port 22: BLOCKED"
+          nc -zv ssh.tmate.io 443 -w 5 2>&1 && echo "port 443: OK" || echo "port 443: BLOCKED"
 
-          SSH_CMD=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-          WEB_URL=$(tmate -S /tmp/tmate.sock display -p '#{tmate_web}')
+          # Configure tmate to try port 443 as well
+          cat > ~/.tmate.conf << 'TMATECFG'
+          set -g tmate-server-host "ssh.tmate.io"
+          set -g tmate-server-port 443
+          TMATECFG
+
+          tmate -S /tmp/tmate.sock new-session -d
+
+          # Poll for URL instead of blocking on wait tmate-ready
+          SSH_CMD=""
+          for i in $(seq 1 18); do
+            sleep 5
+            SSH_CMD=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' 2>/dev/null | tr -d '\r')
+            WEB_URL=$(tmate -S /tmp/tmate.sock display -p '#{tmate_web}' 2>/dev/null | tr -d '\r')
+            echo "  tmate poll $i (${i}x5s): ssh='$SSH_CMD'"
+            [ -n "$SSH_CMD" ] && break
+          done
+
+          if [ -z "$SSH_CMD" ]; then
+            echo "FATAL: tmate.io connection failed after 90s - port 22/443 likely blocked on this runner"
+            echo "Keeping session alive for manual inspection..."
+          fi
 
           echo ""
           echo "=========================================="
@@ -146,7 +166,7 @@ jobs:
           echo "=========================================="
           echo ""
 
-          # Print URL every 60s so it stays visible in the log
+          # Print URL every 60s
           (
             while true; do
               sleep 60

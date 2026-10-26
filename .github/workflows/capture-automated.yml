@@ -285,6 +285,12 @@ jobs:
           grep -aE '(KEY|incentive|mentor|invite|referral|pro_scan|linker|passport|ZS9y8|device_register|webid|roma_redirect)' traffic.txt \
             | head -200 || echo "(no key paths matched)"
 
+          echo "=== passport/account/info response (full block) ==="
+          grep -A 60 'passport/account/info' traffic.txt | head -150 || echo "(not found)"
+
+          echo "=== device_register response (full block) ==="
+          grep -A 40 'device_register' traffic.txt | head -100 || echo "(not found)"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         if: always()

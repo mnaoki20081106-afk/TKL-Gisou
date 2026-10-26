@@ -19,6 +19,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Fetch APK from feature branch
+        run: |
+          git fetch origin claude/new-session-c9gvpt
+          git checkout origin/claude/new-session-c9gvpt -- apk/clean_patched.apk
+          ls -lh apk/
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

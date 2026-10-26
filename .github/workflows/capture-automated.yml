@@ -99,7 +99,7 @@ jobs:
           adb -s localhost:5555 shell iptables -A OUTPUT -p udp --dport 443 -j DROP || true
           echo "QUIC blocked"
 
-          # Install mitmproxy cert as user CA (Android 11 network_security_config will trust this)
+          # Install mitmproxy cert as user CA
           adb -s localhost:5555 shell mkdir -p /data/misc/user/0/cacerts-added
           adb -s localhost:5555 push "${CERT_FILE}" "/data/misc/user/0/cacerts-added/${CERT_FILE}"
           adb -s localhost:5555 shell chmod 644 "/data/misc/user/0/cacerts-added/${CERT_FILE}"
@@ -108,22 +108,35 @@ jobs:
           # Push frida-server
           adb -s localhost:5555 push frida-server /data/local/tmp/frida-server
           adb -s localhost:5555 shell chmod 755 /data/local/tmp/frida-server
-          adb -s localhost:5555 shell "nohup /data/local/tmp/frida-server > /dev/null 2>&1 &"
-          sleep 2
-          adb -s localhost:5555 shell ps -A 2>/dev/null | grep frida-server || echo "frida-server: check failed"
+          adb -s localhost:5555 shell "/data/local/tmp/frida-server &"
+          sleep 3
+          adb -s localhost:5555 shell ps -A 2>/dev/null | grep -i frida || echo "frida-server: check failed (may still be running)"
 
           # Install APK
           adb -s localhost:5555 install -r apk/clean_patched.apk && echo "APK INSTALLED" || echo "APK INSTALL FAILED"
 
       - name: Setup transparent proxy
         run: |
+          # Load kernel modules required for NAT/REDIRECT
+          sudo modprobe xt_REDIRECT 2>/dev/null || true
+          sudo modprobe nf_nat 2>/dev/null || true
+          sudo modprobe xt_conntrack 2>/dev/null || true
+
+          # Switch iptables to legacy backend (nf_tables doesn't support REDIRECT in nat)
+          sudo update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null || true
+          sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null || true
+
           ANDROID_IP=$(docker inspect redroid11 --format '{{.NetworkSettings.IPAddress}}')
           echo "Android container IP: $ANDROID_IP"
           echo "ANDROID_IP=$ANDROID_IP" >> $GITHUB_ENV
 
+          # Verify iptables backend
+          iptables --version
+
           # Redirect Android's TCP 443 and 80 to mitmdump on host port 8080
           sudo iptables -t nat -A PREROUTING -s "$ANDROID_IP" -p tcp --dport 443 -j REDIRECT --to-port 8080
           sudo iptables -t nat -A PREROUTING -s "$ANDROID_IP" -p tcp --dport 80  -j REDIRECT --to-port 8080
+          sudo iptables -t nat -L PREROUTING -n
           echo "iptables PREROUTING rules set"
 
           # Start mitmdump in transparent mode, write to file
@@ -135,16 +148,17 @@ jobs:
             > mitmdump.log 2>&1 &
           echo "MITM_PID=$!" >> $GITHUB_ENV
           sleep 3
-          echo "mitmdump started"
+          echo "mitmdump started, PID=$!"
+          cat mitmdump.log || true
 
       - name: Launch TikTok Lite + attach Frida
         run: |
-          # Launch TikTok Lite so frida can attach
+          # Launch TikTok Lite
           adb -s localhost:5555 shell monkey -p com.zhiliaoapp.musically.go -c android.intent.category.LAUNCHER 1 2>/dev/null || true
           echo "TikTok Lite launched"
           sleep 8
 
-          # Attach frida to running process (not spawn — avoids restart of app)
+          # Attach frida to running process
           frida -U \
             -n com.zhiliaoapp.musically.go \
             -l frida-scripts/tiktok-ssl-bypass.js \

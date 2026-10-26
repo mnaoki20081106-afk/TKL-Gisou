@@ -192,6 +192,7 @@ jobs:
             --ssl-insecure \
             --listen-port 8080 \
             --set flow_detail=1 \
+            -s scripts/mitm-addon.py \
             -w traffic.mitm \
             > mitmdump.log 2>&1 &
           echo "MITM_PID=$!" >> $GITHUB_ENV
@@ -266,8 +267,11 @@ jobs:
           echo "=== Frida log ==="
           cat frida.log || true
 
-          echo "=== mitmdump log (last 50 lines) ==="
-          tail -50 mitmdump.log || true
+          echo "=== mitmdump log (last 80 lines) ==="
+          tail -80 mitmdump.log || true
+
+          echo "=== GEO-BYPASS events from mitmdump log ==="
+          grep -a 'GEO-BYPASS' mitmdump.log || echo "(none — addon did not fire)"
 
           echo "=== logcat TKL_UCODE ==="
           timeout 10 adb -s localhost:5555 logcat -d -s TKL_UCODE 2>/dev/null || true
@@ -296,6 +300,12 @@ jobs:
 
           echo "=== popup/dispatch response (geo dialog source?) ==="
           grep -a -A 60 'popup/dispatch' traffic.txt | head -300 || echo "(not found)"
+
+          echo "=== ppf/eligibility response ==="
+          grep -a -A 30 'KEY:.*ppf/api/eligibility' traffic.txt | head -100 || echo "(not found)"
+
+          echo "=== consent/api/combine response ==="
+          grep -a -A 30 'KEY:.*consent/api/combine' traffic.txt | head -100 || echo "(not found)"
 
           echo "=== region/availability fields across all responses ==="
           grep -aE '(store_region|app_region|geo_block|is_available|region_code|region_check|not.*available|TikTok.*Lite.*available|"region"|"country"|"store_country|lite_available|app_available)' traffic.txt \

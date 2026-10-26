@@ -13,6 +13,8 @@ KEY_PATHS = [
     "popup/dispatch",  # geo-block dialog source
     "user/strategy",   # feature flags / availability
     "get_domains",     # domain routing config
+    "ppf/api/eligibility",  # TikTok Lite eligibility gate
+    "consent/api/combine",  # consent policy (triggers geo scene=555)
 ]
 
 

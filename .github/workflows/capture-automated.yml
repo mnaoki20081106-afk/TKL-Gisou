@@ -34,7 +34,6 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y android-tools-adb
-          # Pin frida core to match frida-server binary; frida-tools is a separate package
           pip install mitmproxy "frida==${FRIDA_VERSION}" frida-tools
           wget -q "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-arm64.xz" \
             -O frida-server.xz
@@ -75,7 +74,6 @@ jobs:
         run: |
           echo "=== kernel ==="
           uname -r
-          echo "=== modprobe iptable_nat ==="
           sudo modprobe nf_conntrack && echo "nf_conntrack: OK" || echo "nf_conntrack: FAILED"
           sudo modprobe nf_nat && echo "nf_nat: OK" || echo "nf_nat: FAILED"
           sudo modprobe iptable_nat && echo "iptable_nat: OK" || echo "iptable_nat: FAILED"
@@ -123,7 +121,8 @@ jobs:
 
           adb -s localhost:5555 push frida-server /data/local/tmp/frida-server
           adb -s localhost:5555 shell chmod 755 /data/local/tmp/frida-server
-          adb -s localhost:5555 shell "/data/local/tmp/frida-server &"
+          # Background the adb shell so frida-server (which runs until killed) doesn't block
+          adb -s localhost:5555 shell /data/local/tmp/frida-server &
           sleep 3
           adb -s localhost:5555 shell ps -A 2>/dev/null | grep -i frida || echo "frida-server: not in ps"
 

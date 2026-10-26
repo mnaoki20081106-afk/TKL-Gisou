@@ -122,9 +122,7 @@ jobs:
             adb shell ps -A 2>/dev/null | grep frida-server || echo "frida-server not found in ps"
 
             echo "=== Start mitmdump (background) ==="
-            mitmdump -w traffic.mitm \
-              --set ssl_insecure=true \
-              2>mitmdump_stderr.txt &
+            mitmdump -w traffic.mitm --set ssl_insecure=true 2>mitmdump_stderr.txt &
             MITM_PID=$!
             sleep 2
 
@@ -135,16 +133,12 @@ jobs:
             adb logcat -c
 
             echo "=== Spawn app with Frida SSL bypass ==="
-            frida -U -f com.zhiliaoapp.musically.go --no-pause \
-              -l frida-scripts/tiktok-ssl-bypass.js \
-              > frida_output.txt 2>&1 &
+            frida -U -f com.zhiliaoapp.musically.go --no-pause -l frida-scripts/tiktok-ssl-bypass.js > frida_output.txt 2>&1 &
             FRIDA_PID=$!
             sleep 5
 
             echo "=== Open invite URL ==="
-            adb shell am start \
-              -a android.intent.action.VIEW \
-              -d "https://lite.tiktok.com/t/ZS9y8Hn4KXRgV-6TKv1/"
+            adb shell am start -a android.intent.action.VIEW -d "https://lite.tiktok.com/t/ZS9y8Hn4KXRgV-6TKv1/"
             sleep 30
 
             echo "=== TKL_UCODE in logcat ==="

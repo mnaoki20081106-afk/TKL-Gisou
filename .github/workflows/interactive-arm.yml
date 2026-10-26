@@ -1,0 +1,144 @@
+name: Interactive ARM64 Debug (tmate + Redroid)
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: 'APK download URL (empty = fetch from feature branch)'
+        required: false
+        default: ''
+
+jobs:
+  interactive:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch APK
+        run: |
+          if [ -n "${{ github.event.inputs.apk_url }}" ]; then
+            mkdir -p apk
+            curl -L "${{ github.event.inputs.apk_url }}" -o apk/clean_patched.apk
+          else
+            git fetch origin claude/new-session-c9gvpt
+            git checkout origin/claude/new-session-c9gvpt -- apk/clean_patched.apk
+          fi
+          ls -lh apk/
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y tmate android-tools-adb
+
+          pip install mitmproxy frida-tools
+          FRIDA_VERSION=$(python3 -c "import frida; print(frida.__version__)")
+          echo "FRIDA_VERSION=$FRIDA_VERSION" >> $GITHUB_ENV
+
+          wget -q "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-arm64.xz" \
+            -O frida-server.xz
+          xz -d frida-server.xz
+          mv frida-server-*-android-arm64 frida-server 2>/dev/null || true
+          chmod +x frida-server
+          ls -lh frida-server
+
+          mitmdump --no-server &
+          sleep 4
+          kill %1 2>/dev/null || true
+          CERT_HASH=$(openssl x509 -inform PEM -subject_hash_old \
+            -in ~/.mitmproxy/mitmproxy-ca-cert.pem | head -1)
+          cp ~/.mitmproxy/mitmproxy-ca-cert.pem "${CERT_HASH}.0"
+          echo "CERT_HASH=$CERT_HASH" >> $GITHUB_ENV
+          echo "CERT_FILE=${CERT_HASH}.0" >> $GITHUB_ENV
+          echo "CA cert hash: $CERT_HASH"
+
+      - name: Load binder kernel module (required for Redroid)
+        run: |
+          uname -r
+          lsmod | grep binder || true
+
+          if sudo modprobe binder_linux num_threads=256 2>/dev/null; then
+            echo "binder_linux loaded OK"
+          else
+            echo "binder_linux not found, trying linux-modules-extra..."
+            sudo apt-get install -y linux-modules-extra-$(uname -r) 2>/dev/null || true
+            sudo modprobe binder_linux num_threads=256 || echo "FATAL: binder_linux load failed - Redroid will not start"
+          fi
+
+          # ashmem not needed on kernel >= 5.18 (Redroid uses memfd instead)
+          sudo modprobe ashmem_linux 2>/dev/null && echo "ashmem_linux loaded" || echo "ashmem_linux not available (OK on newer kernels)"
+
+          lsmod | grep binder
+
+      - name: Start Redroid (Android 11 ARM64 container)
+        run: |
+          docker run -d --privileged \
+            --name redroid11 \
+            -v "$HOME/redroid-data:/data" \
+            -p 5555:5555 \
+            redroid/redroid:11.0.0-latest \
+            androidboot.hardware=redroid \
+            androidboot.use_memfd=true
+
+          echo "Redroid container started"
+          docker ps
+
+      - name: Wait for Android boot
+        run: |
+          sleep 5
+          adb connect localhost:5555
+          sleep 3
+
+          echo "Waiting for sys.boot_completed..."
+          for i in $(seq 1 60); do
+            boot=$(adb -s localhost:5555 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+            echo "  check $i: '$boot'"
+            [ "$boot" = "1" ] && break
+            sleep 5
+          done
+
+          adb -s localhost:5555 shell getprop sys.boot_completed
+
+      - name: Setup device (frida-server, cert, APK, QUIC block)
+        run: |
+          adb -s localhost:5555 root
+          sleep 2
+
+          adb -s localhost:5555 shell iptables -A OUTPUT -p udp --dport 443 -j DROP || true
+
+          adb -s localhost:5555 shell mkdir -p /data/misc/user/0/cacerts-added
+          adb -s localhost:5555 push "${CERT_FILE}" "/data/misc/user/0/cacerts-added/${CERT_FILE}"
+          adb -s localhost:5555 shell chmod 644 "/data/misc/user/0/cacerts-added/${CERT_FILE}"
+
+          adb -s localhost:5555 push frida-server /data/local/tmp/frida-server
+          adb -s localhost:5555 shell chmod 755 /data/local/tmp/frida-server
+          adb -s localhost:5555 shell "nohup /data/local/tmp/frida-server > /dev/null 2>&1 &"
+          sleep 2
+          adb -s localhost:5555 shell ps -A 2>/dev/null | grep frida-server || echo "frida-server not in ps"
+
+          adb -s localhost:5555 install -r apk/clean_patched.apk && echo "APK INSTALLED" || echo "APK INSTALL FAILED"
+
+      - name: Start tmate session
+        run: |
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+          SSH_CMD=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
+          WEB_URL=$(tmate -S /tmp/tmate.sock display -p '#{tmate_web}')
+
+          echo ""
+          echo "=========================================="
+          echo "  INTERACTIVE ARM64 SESSION READY"
+          echo "  SSH : $SSH_CMD"
+          echo "  WEB : $WEB_URL"
+          echo "=========================================="
+          echo ""
+          echo "Quick commands inside the session:"
+          echo "  adb connect localhost:5555"
+          echo "  mitmdump -w traffic.mitm --set ssl_insecure=true &"
+          echo "  frida -U -f com.zhiliaoapp.musically.go -l frida-scripts/tiktok-ssl-bypass.js &"
+          echo "  adb shell am start -a android.intent.action.VIEW -d 'https://lite.tiktok.com/t/ZS9y8Hn4KXRgV-6TKv1/'"
+          echo ""
+
+          sleep 21600

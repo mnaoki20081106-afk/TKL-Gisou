@@ -168,46 +168,11 @@ jobs:
 
           echo "=== UI dump ==="
           adb -s localhost:5555 shell uiautomator dump /sdcard/ui_dump.xml 2>&1 || true
-          adb -s localhost:5555 pull /sdcard/ui_dump.xml ui_dump.xml 2>/dev/null && \
-            echo "ui_dump.xml pulled ($(wc -c < ui_dump.xml)b)" || echo "ui_dump pull failed"
+          adb -s localhost:5555 pull /sdcard/ui_dump.xml ui_dump.xml 2>/dev/null \
+            && echo "ui_dump.xml pulled" || echo "ui_dump pull failed"
 
           echo "=== Parsing UI and attempting tap ==="
-          python3 - <<'PYEOF'
-import subprocess, sys, re
-try:
-    import xml.etree.ElementTree as ET
-    tree = ET.parse("ui_dump.xml")
-except Exception as e:
-    print(f"[!] XML parse failed: {e}")
-    sys.exit(0)
-
-KEYWORDS = ["コイン", "受け取", "accept", "claim", "start", "始め", "参加",
-            "ポイント", "get", "scan", "今すぐ", "利用", "開く", "open"]
-
-hits = []
-print("=== All text nodes ===")
-for node in tree.iter("node"):
-    text = ((node.get("text") or "") + " " + (node.get("content-desc") or "")).strip()
-    bounds = node.get("bounds", "")
-    clickable = node.get("clickable") == "true"
-    if text:
-        print(f"  {'[TAP]' if clickable else '[txt]'} {text!r:60s} {bounds}")
-    if bounds and any(k.lower() in text.lower() for k in KEYWORDS):
-        m = re.findall(r'\d+', bounds)
-        if len(m) == 4:
-            x = (int(m[0]) + int(m[2])) // 2
-            y = (int(m[1]) + int(m[3])) // 2
-            hits.append((text, x, y, clickable))
-
-print()
-if hits:
-    text, x, y, _ = hits[0]
-    print(f"[*] Keyword match: {text!r} -> tapping ({x},{y})")
-    subprocess.run(["adb", "-s", "localhost:5555", "shell", f"input tap {x} {y}"], check=False)
-    print("[*] Tap sent")
-else:
-    print("[!] No keyword match in UI — skipping tap (check ui_dump.xml artifact)")
-PYEOF
+          python3 scripts/tap-ui.py ui_dump.xml
 
           echo "Waiting 60s for native processing after tap..."
           sleep 60
@@ -232,18 +197,7 @@ PYEOF
           ls -lh traffic.mitm 2>/dev/null || echo "(no file)"
 
           echo "=== UI dump (all text) ==="
-          python3 - <<'PYEOF'
-import sys
-try:
-    import xml.etree.ElementTree as ET
-    for node in ET.parse("ui_dump.xml").iter("node"):
-        t = ((node.get("text") or "") + " " + (node.get("content-desc") or "")).strip()
-        if t:
-            c = "[TAP]" if node.get("clickable") == "true" else "[txt]"
-            print(f"  {c} {t!r} {node.get('bounds','')}")
-except Exception as e:
-    print(f"(ui_dump parse error: {e})")
-PYEOF
+          python3 scripts/dump-ui.py ui_dump.xml 2>/dev/null || echo "(no ui_dump.xml)"
 
           echo "=== Full traffic dump (URLs + key bodies) ==="
           python3 scripts/dump-traffic.py traffic.mitm 2>&1 | tee traffic.txt || echo "(dump failed)"

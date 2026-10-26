@@ -60,6 +60,18 @@ jobs:
           apk-mitm apk/clean_patched.apk
           ls -lh apk/
 
+      - name: Install frida-tools + download frida-server
+        run: |
+          pip install frida-tools
+          FRIDA_VERSION=$(python3 -c "import frida; print(frida.__version__)")
+          echo "FRIDA_VERSION=$FRIDA_VERSION" >> $GITHUB_ENV
+          echo "Frida version: $FRIDA_VERSION"
+          wget -q "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-x86_64.xz" \
+            -O frida-server.xz
+          xz -d frida-server.xz
+          mv frida-server-*-android-x86_64 frida-server || true
+          ls -lh frida-server
+
       - name: Install AVD system image (api-29)
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
@@ -108,6 +120,13 @@ jobs:
             adb shell chmod 644 "/data/misc/user/0/cacerts-added/${CERT_FILE}"
             adb shell ls -la /data/misc/user/0/cacerts-added/ | grep "${CERT_HASH}" || true
 
+            echo "=== Push + start frida-server ==="
+            adb push frida-server /data/local/tmp/frida-server
+            adb shell chmod 755 /data/local/tmp/frida-server
+            adb shell "nohup /data/local/tmp/frida-server > /dev/null 2>&1 &"
+            sleep 3
+            adb shell ps -A 2>/dev/null | grep frida-server || echo "frida-server not found in ps"
+
             echo "=== Start mitmdump (background) ==="
             mitmdump -w traffic.mitm \
               --set ssl_insecure=true \
@@ -121,30 +140,33 @@ jobs:
             echo "=== Clear logcat ==="
             adb logcat -c
 
+            echo "=== Spawn app with Frida SSL bypass ==="
+            frida -U -f com.zhiliaoapp.musically.go --no-pause \
+              -l frida-scripts/tiktok-ssl-bypass.js \
+              > frida_output.txt 2>&1 &
+            FRIDA_PID=$!
+            sleep 5
+
             echo "=== Open invite URL ==="
             adb shell am start \
               -a android.intent.action.VIEW \
               -d "https://lite.tiktok.com/t/ZS9y8Hn4KXRgV-6TKv1/"
-            sleep 5
-
-            echo "=== Launch app directly ==="
-            adb shell monkey \
-              -p com.zhiliaoapp.musically.go \
-              --pct-touch 50 \
-              --throttle 500 \
-              30 2>/dev/null || true
             sleep 30
 
             echo "=== TKL_UCODE in logcat ==="
             adb logcat -d | grep "TKL_UCODE" || echo "TKL_UCODE not found"
 
+            echo "=== TIKTOK_SSL_PINNING_BYPASS in logcat ==="
+            adb logcat -d | grep "TIKTOK_SSL_PINNING_BYPASS" | tail -20 || echo "bypass tag not found"
+
             echo "=== Save logcat ==="
             adb logcat -d -t 500 > logcat_full.txt
 
-            echo "=== Stop mitmdump ==="
+            echo "=== Stop frida + mitmdump ==="
+            kill $FRIDA_PID 2>/dev/null || true
             kill $MITM_PID 2>/dev/null || true
             sleep 2
-            ls -lh traffic.mitm || echo "traffic.mitm missing"
+            ls -lh traffic.mitm frida_output.txt || echo "output files missing"
 
       - name: Parse mitmproxy traffic to JSON
         if: always()
@@ -214,3 +236,4 @@ jobs:
             traffic.mitm
             logcat_full.txt
             mitmdump_stderr.txt
+            frida_output.txt

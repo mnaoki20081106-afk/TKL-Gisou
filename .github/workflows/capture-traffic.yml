@@ -54,12 +54,6 @@ jobs:
           echo "CERT_FILE=${CERT_HASH}.0" >> $GITHUB_ENV
           echo "CA cert hash: $CERT_HASH"
 
-      - name: Patch APK with apk-mitm (NSC + OkHttp unpinner)
-        run: |
-          npm install -g apk-mitm
-          apk-mitm apk/clean_patched.apk
-          ls -lh apk/
-
       - name: Install frida-tools + download frida-server
         run: |
           pip install frida-tools
@@ -135,7 +129,7 @@ jobs:
             sleep 2
 
             echo "=== Install patched APK ==="
-            adb install -r "apk/clean_patched-patched.apk" && echo "INSTALL_OK" || echo "INSTALL_FAIL"
+            adb install -r "apk/clean_patched.apk" && echo "INSTALL_OK" || echo "INSTALL_FAIL"
 
             echo "=== Clear logcat ==="
             adb logcat -c

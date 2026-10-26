@@ -1,0 +1,210 @@
+name: Capture TikTok Invite Traffic (Automated)
+
+on:
+  workflow_dispatch:
+    inputs:
+      invite_url:
+        description: 'TikTok Lite invite URL'
+        required: false
+        default: 'https://lite.tiktok.com/t/ZS9y8Hn4KXRgV-6TKv1/'
+      wait_seconds:
+        description: 'Seconds to capture after opening URL'
+        required: false
+        default: '120'
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch APK
+        run: |
+          git fetch origin claude/new-session-c9gvpt
+          git checkout origin/claude/new-session-c9gvpt -- apk/clean_patched.apk
+          ls -lh apk/
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y android-tools-adb
+          pip install mitmproxy frida-tools
+          FRIDA_VERSION=$(python3 -c "import frida; print(frida.__version__)")
+          echo "FRIDA_VERSION=$FRIDA_VERSION" >> $GITHUB_ENV
+          wget -q "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-arm64.xz" \
+            -O frida-server.xz
+          xz -d frida-server.xz
+          mv frida-server-*-android-arm64 frida-server 2>/dev/null || true
+          chmod +x frida-server
+          ls -lh frida-server
+
+      - name: Generate mitmproxy cert
+        run: |
+          mitmdump --no-server &
+          sleep 4; kill %1 2>/dev/null || true
+          CERT_HASH=$(openssl x509 -inform PEM -subject_hash_old \
+            -in ~/.mitmproxy/mitmproxy-ca-cert.pem | head -1)
+          cp ~/.mitmproxy/mitmproxy-ca-cert.pem "${CERT_HASH}.0"
+          echo "CERT_HASH=$CERT_HASH" >> $GITHUB_ENV
+          echo "CERT_FILE=${CERT_HASH}.0" >> $GITHUB_ENV
+          echo "Cert hash: $CERT_HASH"
+
+      - name: Load binder + start Redroid
+        run: |
+          if ! sudo modprobe binder_linux num_threads=256 2>/dev/null; then
+            sudo apt-get install -y linux-modules-extra-$(uname -r)
+            sudo modprobe binder_linux num_threads=256
+          fi
+          sudo modprobe ashmem_linux 2>/dev/null || true
+          lsmod | grep binder
+
+          docker run -d --privileged --name redroid11 \
+            -v "$HOME/redroid-data:/data" \
+            -p 5555:5555 \
+            redroid/redroid:11.0.0-latest \
+            androidboot.hardware=redroid androidboot.use_memfd=true
+          docker ps
+
+      - name: Wait for Android boot
+        run: |
+          sleep 5
+          adb connect localhost:5555
+          sleep 3
+          for i in $(seq 1 60); do
+            boot=$(adb -s localhost:5555 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+            echo "  boot check $i: '$boot'"
+            [ "$boot" = "1" ] && break
+            sleep 5
+          done
+          adb -s localhost:5555 shell getprop sys.boot_completed
+
+      - name: Setup device
+        run: |
+          adb -s localhost:5555 root || true
+          sleep 3
+          adb disconnect localhost:5555 || true
+          sleep 1
+          for i in $(seq 1 30); do
+            adb connect localhost:5555 2>/dev/null || true
+            state=$(adb -s localhost:5555 get-state 2>/dev/null | tr -d '\r')
+            echo "  reconnect $i: '$state'"
+            [ "$state" = "device" ] && break
+            sleep 1
+          done
+
+          # Block QUIC to force TCP/TLS
+          adb -s localhost:5555 shell iptables -A OUTPUT -p udp --dport 443 -j DROP || true
+          echo "QUIC blocked"
+
+          # Install mitmproxy cert as user CA (Android 11 network_security_config will trust this)
+          adb -s localhost:5555 shell mkdir -p /data/misc/user/0/cacerts-added
+          adb -s localhost:5555 push "${CERT_FILE}" "/data/misc/user/0/cacerts-added/${CERT_FILE}"
+          adb -s localhost:5555 shell chmod 644 "/data/misc/user/0/cacerts-added/${CERT_FILE}"
+          echo "Cert pushed"
+
+          # Push frida-server
+          adb -s localhost:5555 push frida-server /data/local/tmp/frida-server
+          adb -s localhost:5555 shell chmod 755 /data/local/tmp/frida-server
+          adb -s localhost:5555 shell "nohup /data/local/tmp/frida-server > /dev/null 2>&1 &"
+          sleep 2
+          adb -s localhost:5555 shell ps -A 2>/dev/null | grep frida-server || echo "frida-server: check failed"
+
+          # Install APK
+          adb -s localhost:5555 install -r apk/clean_patched.apk && echo "APK INSTALLED" || echo "APK INSTALL FAILED"
+
+      - name: Setup transparent proxy
+        run: |
+          ANDROID_IP=$(docker inspect redroid11 --format '{{.NetworkSettings.IPAddress}}')
+          echo "Android container IP: $ANDROID_IP"
+          echo "ANDROID_IP=$ANDROID_IP" >> $GITHUB_ENV
+
+          # Redirect Android's TCP 443 and 80 to mitmdump on host port 8080
+          sudo iptables -t nat -A PREROUTING -s "$ANDROID_IP" -p tcp --dport 443 -j REDIRECT --to-port 8080
+          sudo iptables -t nat -A PREROUTING -s "$ANDROID_IP" -p tcp --dport 80  -j REDIRECT --to-port 8080
+          echo "iptables PREROUTING rules set"
+
+          # Start mitmdump in transparent mode, write to file
+          mitmdump --mode transparent \
+            --ssl-insecure \
+            --listen-port 8080 \
+            --set flow_detail=1 \
+            -w traffic.mitm \
+            > mitmdump.log 2>&1 &
+          echo "MITM_PID=$!" >> $GITHUB_ENV
+          sleep 3
+          echo "mitmdump started"
+
+      - name: Launch TikTok Lite + attach Frida
+        run: |
+          # Launch TikTok Lite so frida can attach
+          adb -s localhost:5555 shell monkey -p com.zhiliaoapp.musically.go -c android.intent.category.LAUNCHER 1 2>/dev/null || true
+          echo "TikTok Lite launched"
+          sleep 8
+
+          # Attach frida to running process (not spawn — avoids restart of app)
+          frida -U \
+            -n com.zhiliaoapp.musically.go \
+            -l frida-scripts/tiktok-ssl-bypass.js \
+            --no-pause \
+            > frida.log 2>&1 &
+          echo "FRIDA_PID=$!" >> $GITHUB_ENV
+          echo "Frida attached, waiting 15s for injection..."
+          sleep 15
+
+          echo "=== Frida log ==="
+          cat frida.log || true
+
+      - name: Open invite URL
+        run: |
+          INVITE_URL="${{ github.event.inputs.invite_url }}"
+          echo "Opening: $INVITE_URL"
+          adb -s localhost:5555 shell am start \
+            -a android.intent.action.VIEW \
+            -d "$INVITE_URL"
+
+          WAIT=${{ github.event.inputs.wait_seconds }}
+          echo "Capturing for ${WAIT}s..."
+          sleep "$WAIT"
+          echo "Capture window done"
+
+      - name: Stop capture + dump results
+        if: always()
+        run: |
+          kill $FRIDA_PID 2>/dev/null || true
+          kill $MITM_PID 2>/dev/null || pkill -f mitmdump || true
+          sleep 2
+
+          echo "=== traffic.mitm size ==="
+          ls -lh traffic.mitm 2>/dev/null || echo "(no file)"
+
+          echo "=== mitmdump log ==="
+          cat mitmdump.log || true
+
+          echo "=== Exporting traffic to text ==="
+          mitmdump -r traffic.mitm -q 2>/dev/null > traffic.txt || echo "(export failed)"
+          wc -l traffic.txt
+          cat traffic.txt
+
+          echo "=== Frida log ==="
+          cat frida.log || true
+
+          echo "=== logcat TKL_UCODE ==="
+          adb -s localhost:5555 logcat -d -s TKL_UCODE 2>/dev/null || true
+
+          echo "=== logcat TIKTOK_SSL ==="
+          adb -s localhost:5555 logcat -d -s TIKTOK_SSL_PINNING_BYPASS 2>/dev/null || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tiktok-traffic-${{ github.run_number }}
+          path: |
+            traffic.mitm
+            traffic.txt
+            frida.log
+            mitmdump.log
+          retention-days: 7

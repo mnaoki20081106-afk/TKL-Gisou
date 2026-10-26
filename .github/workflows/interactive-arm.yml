@@ -67,7 +67,6 @@ jobs:
             sudo modprobe binder_linux num_threads=256 || echo "FATAL: binder_linux load failed - Redroid will not start"
           fi
 
-          # ashmem not needed on kernel >= 5.18 (Redroid uses memfd instead)
           sudo modprobe ashmem_linux 2>/dev/null && echo "ashmem_linux loaded" || echo "ashmem_linux not available (OK on newer kernels)"
 
           lsmod | grep binder
@@ -125,6 +124,8 @@ jobs:
         run: |
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
+          sleep 5
+
           SSH_CMD=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
           WEB_URL=$(tmate -S /tmp/tmate.sock display -p '#{tmate_web}')
 
@@ -135,6 +136,16 @@ jobs:
           echo "  WEB : $WEB_URL"
           echo "=========================================="
           echo ""
+
+          # Print URL every 60s so it stays visible in the log
+          (
+            while true; do
+              sleep 60
+              SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' 2>/dev/null)
+              echo "[keepalive] SSH: $SSH"
+            done
+          ) &
+
           echo "Quick commands inside the session:"
           echo "  adb connect localhost:5555"
           echo "  mitmdump -w traffic.mitm --set ssl_insecure=true &"

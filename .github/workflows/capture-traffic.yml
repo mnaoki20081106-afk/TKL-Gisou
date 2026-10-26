@@ -12,7 +12,7 @@ on:
 
 jobs:
   capture:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
@@ -25,12 +25,12 @@ jobs:
           git checkout origin/claude/new-session-c9gvpt -- apk/clean_patched.apk
           ls -lh apk/
 
-      - name: Enable KVM (best-effort)
+      - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm || true
-          ls -la /dev/kvm && echo "KVM available" || echo "KVM not available - will use TCG"
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -58,40 +58,25 @@ jobs:
           FRIDA_VERSION=$(python3 -c "import frida; print(frida.__version__)")
           echo "FRIDA_VERSION=$FRIDA_VERSION" >> $GITHUB_ENV
           echo "Frida version: $FRIDA_VERSION"
-          wget -q "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-arm64.xz" \
+          wget -q "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-x86_64.xz" \
             -O frida-server.xz
           xz -d frida-server.xz
-          mv frida-server-*-android-arm64 frida-server || true
+          mv frida-server-*-android-x86_64 frida-server || true
           ls -lh frida-server
 
-      - name: Install Android cmdline-tools
-        run: |
-          CMDLINE_TOOLS_VERSION=15859902
-          CMDLINE_TOOLS_SHA256=4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583
-          wget -q "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip" \
-            -O cmdline-tools.zip
-          echo "${CMDLINE_TOOLS_SHA256}  cmdline-tools.zip" | sha256sum -c
-          mkdir -p $HOME/android-sdk/cmdline-tools
-          unzip -q cmdline-tools.zip -d $HOME/android-sdk/cmdline-tools/
-          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
-          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
-          echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
-          $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --version
-
-      - name: Install AVD system image (api-30 google_apis arm64)
+      - name: Install AVD system image (api-30 google_apis x86_64)
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
             "emulator" \
-            "system-images;android-30;google_apis;arm64-v8a"
+            "system-images;android-30;google_apis;x86_64"
 
       - name: Create AVD
         run: |
           echo "no" | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd \
             --name "capture_avd" \
-            --package "system-images;android-30;google_apis;arm64-v8a" \
+            --package "system-images;android-30;google_apis;x86_64" \
             --device "pixel_4" \
             --force
 
@@ -100,7 +85,7 @@ jobs:
         with:
           api-level: 30
           target: google_apis
-          arch: arm64-v8a
+          arch: x86_64
           avd-name: capture_avd
           force-avd-creation: false
           emulator-options: >-

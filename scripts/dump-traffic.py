@@ -2,6 +2,7 @@
 """Read a traffic.mitm file and print full URLs, headers, and bodies."""
 import sys
 import json
+import gzip
 
 KEY_PATHS = [
     "incentive", "mentor", "invite", "referral",
@@ -9,12 +10,21 @@ KEY_PATHS = [
     "device_register", "linker", "passport",
     "abtest", "feed/initial", "user/webid",
     "/t/ZS9y8",  # the invite short URL
+    "popup/dispatch",  # geo-block dialog source
+    "user/strategy",   # feature flags / availability
+    "get_domains",     # domain routing config
 ]
 
 
-def fmt_body(b, limit=3000):
+def fmt_body(b, limit=12000):
     if not b:
         return "(empty)"
+    # TikTok sometimes sends gzip without Content-Encoding header
+    if b[:2] == b'\x1f\x8b':
+        try:
+            b = gzip.decompress(b)
+        except Exception:
+            pass
     try:
         j = json.loads(b)
         return json.dumps(j, ensure_ascii=False, indent=2)[:limit]

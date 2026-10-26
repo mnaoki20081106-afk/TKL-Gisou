@@ -152,8 +152,6 @@ jobs:
 
       - name: Spawn TikTok Lite + inject Frida
         run: |
-          # Python script: device.spawn() -> attach() -> load() -> resume()
-          # This avoids all frida CLI flag issues and race conditions
           python3 frida-scripts/spawn-inject.py > frida.log 2>&1 &
           echo "FRIDA_PID=$!" >> $GITHUB_ENV
           echo "Frida spawning TikTok Lite, waiting 20s for app to init..."
@@ -185,16 +183,14 @@ jobs:
           echo "=== traffic.mitm size ==="
           ls -lh traffic.mitm 2>/dev/null || echo "(no file)"
 
-          echo "=== mitmdump log ==="
-          cat mitmdump.log || true
-
-          echo "=== Exporting traffic to text ==="
-          mitmdump -r traffic.mitm -q 2>/dev/null > traffic.txt || echo "(export failed)"
-          wc -l traffic.txt
-          cat traffic.txt
+          echo "=== Full traffic dump (URLs + key bodies) ==="
+          python3 scripts/dump-traffic.py traffic.mitm 2>&1 | tee traffic.txt || echo "(dump failed)"
 
           echo "=== Frida log ==="
           cat frida.log || true
+
+          echo "=== mitmdump log (last 50 lines) ==="
+          tail -50 mitmdump.log || true
 
           echo "=== logcat TKL_UCODE ==="
           adb -s localhost:5555 logcat -d -s TKL_UCODE 2>/dev/null || true

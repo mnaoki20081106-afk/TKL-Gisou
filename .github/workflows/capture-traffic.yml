@@ -133,7 +133,7 @@ jobs:
             adb logcat -c
 
             echo "=== Spawn app with Frida SSL bypass ==="
-            frida -U -f com.zhiliaoapp.musically.go --no-pause -l frida-scripts/tiktok-ssl-bypass.js > frida_output.txt 2>&1 &
+            frida -U -f com.zhiliaoapp.musically.go -l frida-scripts/tiktok-ssl-bypass.js > frida_output.txt 2>&1 &
             FRIDA_PID=$!
             sleep 5
 

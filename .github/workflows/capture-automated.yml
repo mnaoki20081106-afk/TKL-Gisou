@@ -126,6 +126,11 @@ jobs:
           adb -s localhost:5555 install -r apk/clean_patched.apk \
             && echo "APK INSTALLED" || echo "APK INSTALL FAILED (continuing)"
 
+          echo "=== TikTok Lite intent filters (pm dump) ==="
+          timeout 10 adb -s localhost:5555 shell pm dump com.zhiliaoapp.musically.go 2>/dev/null \
+            | grep -E -A2 'ACTION_VIEW|snssdk|aweme|roma_redirect|scheme|intentsFilter' \
+            | head -300 || echo "(pm dump failed)"
+
       - name: Setup transparent proxy
         run: |
           ANDROID_IP=$(docker inspect redroid11 --format '{{.NetworkSettings.IPAddress}}')
@@ -227,7 +232,7 @@ jobs:
           python3 scripts/dump-ui.py ui_dump2.xml 2>/dev/null || echo "(no ui_dump2.xml)"
 
           echo "=== Key traffic paths ==="
-          grep -E '(KEY|incentive|mentor|invite|referral|pro_scan|linker|passport|ZS9y8|device_register|webid|roma_redirect)' traffic.txt \
+          grep -aE '(KEY|incentive|mentor|invite|referral|pro_scan|linker|passport|ZS9y8|device_register|webid|roma_redirect)' traffic.txt \
             | head -200 || echo "(no key paths matched)"
 
       - name: Upload artifacts

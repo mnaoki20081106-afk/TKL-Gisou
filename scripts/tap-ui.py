@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Parse uiautomator dump XML, extract snssdk deeplink or tap by keyword."""
 import subprocess, sys, re, xml.etree.ElementTree as ET
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, quote
 
 KEYWORDS = [
     "コイン", "受け取", "accept", "claim", "start",
@@ -47,9 +47,11 @@ def main():
                 qs = parse_qs(text.lstrip("?"), keep_blank_values=True)
                 val = qs.get("redirect_url", [None])[0]
                 if val:
-                    decoded = unquote(val)
-                    if decoded.startswith("snssdk473824://"):
-                        snssdk_url = decoded
+                    # parse_qs already decoded the outer percent-encoding once.
+                    # Do NOT unquote again — that would strip encoding from the
+                    # inner params_url value (bare ? and & break Android Uri.parse).
+                    if val.startswith("snssdk473824://"):
+                        snssdk_url = val
                         print(f"[*] snssdk URL extracted via redirect_url ({len(snssdk_url)} chars)")
                 elif text.startswith("snssdk473824://"):
                     snssdk_url = text.strip()
@@ -78,7 +80,8 @@ def main():
     if snssdk_url:
         fire_snssdk(snssdk_url)
     elif incentive_url:
-        deeplink = f"snssdk473824://roma_redirect/?params_url={incentive_url}"
+        encoded = quote(incentive_url, safe='')
+        deeplink = f"snssdk473824://roma_redirect/?params_url={encoded}"
         print(f"[*] Constructed roma_redirect from incentive URL ({len(deeplink)} chars)")
         fire_snssdk(deeplink)
     elif hits:

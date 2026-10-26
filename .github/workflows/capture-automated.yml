@@ -154,9 +154,12 @@ jobs:
           adb -s localhost:5555 push frida-server /data/local/tmp/frida-server \
             && echo "FRIDA PUSH: PASS" || echo "FRIDA PUSH: FAIL"
           adb -s localhost:5555 shell chmod 755 /data/local/tmp/frida-server || true
-          adb -s localhost:5555 shell /data/local/tmp/frida-server &
+          adb -s localhost:5555 shell "/data/local/tmp/frida-server &"
           sleep 3
           adb -s localhost:5555 shell ps -A 2>/dev/null | grep -i frida || echo "frida-server: not in ps"
+          adb -s localhost:5555 forward tcp:27042 tcp:27042 \
+            && echo "ADB forward 27042: OK" || echo "ADB forward 27042: FAILED"
+          adb -s localhost:5555 forward --list
 
           adb -s localhost:5555 install -r apk/clean_patched.apk \
             && echo "APK INSTALLED" || echo "APK INSTALL FAILED (continuing)"

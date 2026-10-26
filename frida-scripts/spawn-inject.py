@@ -19,22 +19,20 @@ def on_message(message, data):
 
 def get_device():
     dm = frida.get_device_manager()
+    # Primary: connect via ADB-forwarded frida-server port (adb forward tcp:27042 tcp:27042)
+    # This is needed for Redroid (ADB-over-TCP) which frida's USB transport doesn't see.
+    for attempt in range(5):
+        try:
+            dev = dm.add_remote_device("127.0.0.1:27042")
+            print(f"[*] Remote device via 127.0.0.1:27042: {dev.id}", flush=True)
+            return dev
+        except Exception as e:
+            print(f"[!] add_remote_device attempt {attempt+1}: {e}", flush=True)
+            time.sleep(2)
     print("[*] Enumerating devices:", flush=True)
     for d in dm.enumerate_devices():
         print(f"    id={d.id!r}  name={d.name!r}  type={d.type!r}", flush=True)
-    # -U equivalent: frida's USB transport covers both physical USB and adb-over-TCP
-    try:
-        dev = frida.get_usb_device(timeout=15)
-        print(f"[*] Got USB device: {dev.id}", flush=True)
-        return dev
-    except Exception as e:
-        print(f"[!] get_usb_device failed: {e}", flush=True)
-    # fallback: first non-local device
-    for d in dm.enumerate_devices():
-        if d.type != "local":
-            print(f"[*] Fallback device: {d.id}", flush=True)
-            return d
-    raise RuntimeError("No usb/remote device found")
+    raise RuntimeError("Could not connect to frida-server on 127.0.0.1:27042")
 
 
 def main():

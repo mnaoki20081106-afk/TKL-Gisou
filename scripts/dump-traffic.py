@@ -4,6 +4,8 @@ import sys
 import json
 import gzip
 
+_ZSTD_MAGIC = b'\x28\xb5\x2f\xfd'
+
 KEY_PATHS = [
     "incentive", "mentor", "invite", "referral",
     "pro_scan_code", "share/page", "share/",
@@ -21,6 +23,13 @@ KEY_PATHS = [
 def fmt_body(b, limit=12000):
     if not b:
         return "(empty)"
+    # TikTok uses zstd with Content-Encoding: ttzip (normalized by addon; handle raw fallback)
+    if b[:4] == _ZSTD_MAGIC:
+        try:
+            import zstandard
+            b = zstandard.ZstdDecompressor().decompress(b)
+        except Exception:
+            pass
     # TikTok sometimes sends gzip without Content-Encoding header
     if b[:2] == b'\x1f\x8b':
         try:
@@ -64,7 +73,11 @@ def main():
                     print(f"{req.method} {url}")
                     if flow.response:
                         ct = flow.response.headers.get("content-type", "")
-                        print(f"  -> {flow.response.status_code}  {len(flow.response.content)}b  {ct[:60]}")
+                        try:
+                            content_len = len(flow.response.content)
+                        except Exception:
+                            content_len = len(flow.response.raw_content)
+                        print(f"  -> {flow.response.status_code}  {content_len}b  {ct[:60]}")
                     if is_key:
                         key_flows.append(flow)
                 except Exception as flow_err:
@@ -88,11 +101,15 @@ def main():
             print(fmt_body(req.content))
         if flow.response:
             r = flow.response
-            print(f"--- Response {r.status_code} ({len(r.content)}b) ---")
+            try:
+                body = r.content
+            except Exception:
+                body = r.raw_content
+            print(f"--- Response {r.status_code} ({len(body)}b) ---")
             for k, v in r.headers.items():
                 print(f"  {k}: {v[:200]}")
             print("--- Response body ---")
-            print(fmt_body(r.content, limit=12000))
+            print(fmt_body(body, limit=12000))
 
 
 if __name__ == "__main__":

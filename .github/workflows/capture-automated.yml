@@ -30,7 +30,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y android-tools-adb
-          pip install mitmproxy "frida==${FRIDA_VERSION}" frida-tools
+          pip install mitmproxy "frida==${FRIDA_VERSION}" frida-tools zstandard
           wget -q "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-arm64.xz" \
             -O frida-server.xz
           xz -d frida-server.xz
@@ -183,14 +183,21 @@ jobs:
           INVITE_URL="${{ github.event.inputs.invite_url }}"
           echo "Opening short URL: $INVITE_URL"
 
+          # Resolve short URL → full www.tiktok.com invite page URL.
+          # 20s max; if curl fails/times-out, fall back to short URL.
+          FULL_URL=$(curl -s -L -o /dev/null -w '%{url_effective}' \
+            --max-time 20 --connect-timeout 10 \
+            -A "Mozilla/5.0 (Linux; Android 11; arm64) AppleWebKit/537.36" \
+            "$INVITE_URL" 2>/dev/null || true)
+          echo "Resolved URL: ${FULL_URL:-$INVITE_URL}"
+
           # Fire at TikTok Lite via explicit component — bypasses App Links verification.
-          # Short URL has no special shell chars; TikTok Lite WebView follows the redirect internally.
+          # Single-quote the -d value inside adb shell so & in query params is not
+          # interpreted as a background operator by the Android shell.
           COMPONENT="com.zhiliaoapp.musically.go/com.ss.android.ugc.aweme.login.TokenFilterInvisibleActivity"
-          adb -s localhost:5555 shell am start -W \
-            -n "$COMPONENT" \
-            -a android.intent.action.VIEW \
-            -c android.intent.category.BROWSABLE \
-            -d "$INVITE_URL" \
+          TARGET_URL="${FULL_URL:-$INVITE_URL}"
+          adb -s localhost:5555 shell \
+            "am start -W -n '$COMPONENT' -a android.intent.action.VIEW -c android.intent.category.BROWSABLE -d '$TARGET_URL'" \
             && echo "am start: OK" || echo "am start: failed (continuing)"
 
           echo "Waiting 40s for WebView to render invite page..."

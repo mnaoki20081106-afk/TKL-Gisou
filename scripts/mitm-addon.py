@@ -18,8 +18,16 @@ import re
 
 from mitmproxy import http
 
+_ZSTD_MAGIC = b'\x28\xb5\x2f\xfd'
+
 
 def _decode_body(content: bytes) -> bytes:
+    if content[:4] == _ZSTD_MAGIC:
+        try:
+            import zstandard
+            return zstandard.ZstdDecompressor().decompress(content)
+        except Exception:
+            pass
     if content[:2] == b'\x1f\x8b':
         try:
             return gzip.decompress(content)
@@ -47,6 +55,19 @@ def _rewrite_geo_cookies(flow: http.HTTPFlow) -> None:
 
 def response(flow: http.HTTPFlow) -> None:
     url = flow.request.pretty_url
+
+    # Normalize ttzip (TikTok's zstd variant) so mitmproxy stores decoded content
+    if flow.response.headers.get("content-encoding", "").lower() == "ttzip":
+        raw = flow.response.raw_content
+        if raw and raw[:4] == _ZSTD_MAGIC:
+            try:
+                import zstandard
+                decompressed = zstandard.ZstdDecompressor().decompress(raw)
+                flow.response.raw_content = decompressed
+                del flow.response.headers["content-encoding"]
+                flow.response.headers["content-length"] = str(len(decompressed))
+            except Exception:
+                pass
 
     # Layer 1: JP region assignment via cookie rewrite
     if "device_register" in url:

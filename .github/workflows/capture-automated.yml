@@ -181,10 +181,10 @@ jobs:
 
           MITM_CMD="mitmdump --mode transparent --ssl-insecure --listen-port 8080 --set flow_detail=1 -s scripts/mitm-addon.py -w traffic.mitm"
           if [ "$PROXY_IP" = "PROXY_FAILED" ]; then
-            echo "WARNING: JP proxy unreachable — starting mitmdump WITHOUT proxy (US exit, geo-block likely)"
+            echo "WARNING: JP proxy unreachable -- starting mitmdump WITHOUT proxy (US exit, geo-block likely)"
             $MITM_CMD > mitmdump.log 2>&1 &
           else
-            echo "JP proxy OK ($PROXY_IP) — starting mitmdump via proxychains4"
+            echo "JP proxy OK ($PROXY_IP) -- starting mitmdump via proxychains4"
             PROXYCHAINS_CONF_FILE=/tmp/proxychains.conf proxychains4 $MITM_CMD > mitmdump.log 2>&1 &
           fi
           echo "MITM_PID=$!" >> $GITHUB_ENV
@@ -207,7 +207,7 @@ jobs:
           INVITE_URL="${{ github.event.inputs.invite_url }}"
           echo "Opening short URL: $INVITE_URL"
 
-          # Resolve short URL → full www.tiktok.com invite page URL.
+          # Resolve short URL -> full www.tiktok.com invite page URL.
           # 20s max; if curl fails/times-out, fall back to short URL.
           FULL_URL=$(curl -s -L -o /dev/null -w '%{url_effective}' \
             --max-time 20 --connect-timeout 10 \
@@ -215,7 +215,7 @@ jobs:
             "$INVITE_URL" 2>/dev/null || true)
           echo "Resolved URL: ${FULL_URL:-$INVITE_URL}"
 
-          # Fire at TikTok Lite via explicit component — bypasses App Links verification.
+          # Fire at TikTok Lite via explicit component -- bypasses App Links verification.
           # Single-quote the -d value inside adb shell so & in query params is not
           # interpreted as a background operator by the Android shell.
           COMPONENT="com.zhiliaoapp.musically.go/com.ss.android.ugc.aweme.login.TokenFilterInvisibleActivity"
@@ -273,7 +273,7 @@ jobs:
           tail -80 mitmdump.log || true
 
           echo "=== GEO-JP + GEO-BYPASS events from mitmdump log ==="
-          grep -a -E 'GEO-JP|GEO-BYPASS' mitmdump.log || echo "(none — addon did not fire)"
+          grep -a -E 'GEO-JP|GEO-BYPASS' mitmdump.log || echo "(none -- addon did not fire)"
 
           echo "=== logcat TKL_UCODE ==="
           timeout 10 adb -s localhost:5555 logcat -d -s TKL_UCODE 2>/dev/null || true
@@ -316,10 +316,10 @@ jobs:
           grep -a -A 80 'KEY:.*gecko/server' traffic.txt | head -300 || echo "(not found)"
 
           echo "=== GET_DOMAINS / POPUP555 / GECKO / GEO-REQ from mitmdump addon ==="
-          grep -a -E '\[(GET_DOMAINS|POPUP555|GECKO|GEO-REQ|GEO-JP|GEO-BYPASS|DEVREG-BODY|INCENTIVE-REQ|PATCH_GD)\]' mitmdump.log | head -300 || echo "(none)"
+          grep -a -E '\[(GET_DOMAINS|POPUP555|GECKO|GEO-REQ|GEO-JP|GEO-BYPASS|DEVREG-BODY|INCENTIVE-REQ|PATCH_GD|H2-PATCH)\]' mitmdump.log | head -300 || echo "(none)"
 
-          echo "=== INCENTIVE-REQ / PATCH_GD / DEVREG-BODY (product_facade & device_register flow) ==="
-          grep -a -E '\[(INCENTIVE-REQ|PATCH_GD|DEVREG-BODY)\]' mitmdump.log || echo "(none — product_facade not reached proxy)"
+          echo "=== INCENTIVE-REQ / PATCH_GD / H2-PATCH / DEVREG-BODY (product_facade & H2 host rewrite flow) ==="
+          grep -a -E '\[(INCENTIVE-REQ|PATCH_GD|DEVREG-BODY|H2-PATCH)\]' mitmdump.log || echo "(none -- product_facade not reached proxy)"
 
           echo "=== region/availability fields across all responses ==="
           grep -aE '(store_region|app_region|geo_block|is_available|region_code|region_check|not.*available|TikTok.*Lite.*available|"region"|"country"|"store_country|lite_available|app_available)' traffic.txt \

@@ -108,41 +108,6 @@ jobs:
           done
           echo "Final adb state: $(adb -s localhost:5555 get-state 2>/dev/null || echo unknown)"
 
-          echo "=== Set device locale to Japan (bypass US geo-restriction) ==="
-          adb -s localhost:5555 shell setprop persist.sys.locale ja-JP || true
-          adb -s localhost:5555 shell setprop persist.sys.timezone Asia/Tokyo || true
-          echo "Restarting Android framework for locale change..."
-          adb -s localhost:5555 shell stop || true
-          sleep 10
-          adb -s localhost:5555 shell start || true
-          sleep 20
-          for i in $(seq 1 40); do
-            boot=$(adb -s localhost:5555 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-            echo "  locale-boot check $i: '$boot'"
-            [ "$boot" = "1" ] && break
-            sleep 3
-          done
-          adb disconnect localhost:5555 || true
-          sleep 2
-          for i in $(seq 1 20); do
-            adb connect localhost:5555 2>/dev/null || true
-            state=$(adb -s localhost:5555 get-state 2>/dev/null | tr -d '\r')
-            [ "$state" = "device" ] && break
-            sleep 2
-          done
-          adb -s localhost:5555 root || true
-          sleep 3
-          adb disconnect localhost:5555 || true
-          sleep 1
-          for i in $(seq 1 15); do
-            adb connect localhost:5555 2>/dev/null || true
-            state=$(adb -s localhost:5555 get-state 2>/dev/null | tr -d '\r')
-            [ "$state" = "device" ] && break
-            sleep 2
-          done
-          echo "Locale: $(adb -s localhost:5555 shell getprop persist.sys.locale 2>/dev/null)"
-          echo "Timezone: $(adb -s localhost:5555 shell getprop persist.sys.timezone 2>/dev/null)"
-
           adb -s localhost:5555 shell iptables -A OUTPUT -p udp --dport 443 -j DROP || true
           echo "QUIC block attempted"
 
@@ -161,7 +126,7 @@ jobs:
             && echo "ADB forward 27042: OK" || echo "ADB forward 27042: FAILED"
           adb -s localhost:5555 forward --list
 
-          adb -s localhost:5555 install -r apk/clean_patched.apk \
+          timeout 120 adb -s localhost:5555 install -r apk/clean_patched.apk \
             && echo "APK INSTALLED" || echo "APK INSTALL FAILED (continuing)"
 
           echo "=== TikTok Lite intent filters (dumpsys package) ==="
@@ -172,12 +137,12 @@ jobs:
             pm_dump_full.txt | head -400 || echo "(dumpsys grep empty)"
 
           echo "=== Force App Link routing to TikTok Lite ==="
-          adb -s localhost:5555 shell pm set-app-link com.zhiliaoapp.musically.go always \
+          timeout 30 adb -s localhost:5555 shell pm set-app-link com.zhiliaoapp.musically.go always \
             && echo "set-app-link always: OK" || echo "set-app-link always: failed (expected on API 30)"
-          adb -s localhost:5555 shell pm set-app-links --package com.zhiliaoapp.musically.go 0 all \
+          timeout 30 adb -s localhost:5555 shell pm set-app-links --package com.zhiliaoapp.musically.go 0 all \
             && echo "set-app-links 0 all: OK" || echo "set-app-links 0 all: failed (OK)"
-          adb -s localhost:5555 shell pm get-app-links com.zhiliaoapp.musically.go 2>/dev/null \
-            || adb -s localhost:5555 shell pm get-app-link com.zhiliaoapp.musically.go 2>/dev/null \
+          timeout 20 adb -s localhost:5555 shell pm get-app-links com.zhiliaoapp.musically.go 2>/dev/null \
+            || timeout 20 adb -s localhost:5555 shell pm get-app-link com.zhiliaoapp.musically.go 2>/dev/null \
             || echo "get-app-link: not available"
 
       - name: Setup transparent proxy

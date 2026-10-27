@@ -205,8 +205,8 @@ jobs:
           # interpreted as a background operator by the Android shell.
           COMPONENT="com.zhiliaoapp.musically.go/com.ss.android.ugc.aweme.login.TokenFilterInvisibleActivity"
           TARGET_URL="${FULL_URL:-$INVITE_URL}"
-          adb -s localhost:5555 shell \
-            "am start -W -n '$COMPONENT' -a android.intent.action.VIEW -c android.intent.category.BROWSABLE -d '$TARGET_URL'" \
+          timeout 45 adb -s localhost:5555 shell \
+            "am start -n '$COMPONENT' -a android.intent.action.VIEW -c android.intent.category.BROWSABLE -d '$TARGET_URL'" \
             && echo "am start: OK" || echo "am start: failed (continuing)"
 
           echo "Waiting 40s for WebView to render invite page..."

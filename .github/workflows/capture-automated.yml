@@ -182,12 +182,11 @@ jobs:
         run: |
           INVITE_URL="${{ github.event.inputs.invite_url }}"
           echo "Opening: $INVITE_URL"
-          # BROWSABLE category required for App Link matching; package name at end (not --package)
+          # No package constraint — let Android route via App Links (pm set-app-link already set to always)
           adb -s localhost:5555 shell am start -W \
             -a android.intent.action.VIEW \
             -c android.intent.category.BROWSABLE \
             -d "$INVITE_URL" \
-            com.zhiliaoapp.musically.go \
             && echo "am start: OK" || echo "am start: failed (continuing)"
 
           echo "Waiting 40s for WebView to render invite page..."
@@ -230,7 +229,7 @@ jobs:
           echo "=== Full traffic dump -> traffic.txt (silent) ==="
           python3 scripts/dump-traffic.py traffic.mitm > traffic.txt 2>&1 \
             && echo "dump OK: $(wc -l < traffic.txt) lines" \
-            || echo "(dump failed)"
+            || { echo "(dump failed)"; echo "=== dump error ==="; head -30 traffic.txt; }
 
           echo "=== Frida log ==="
           cat frida.log || true

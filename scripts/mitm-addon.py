@@ -96,14 +96,14 @@ def _patch_h2_keepalive_hosts(data: dict, context: str) -> bool:
       - data["data"]["ttnet_h2_config"]               (get_domains top-level)
       - data["ttnet_h2_config"]                       (get_domains nested)
 
-    tnc_data may be a JSON-string (double-encoded) -- handles that too.
+    tnc_data may be a JSON-string (double-encoded) — handles that too.
     Returns True if any substitution was made.
     """
     patched = False
 
     h2_containers = []
 
-    # Path 1: device_register -- data -> tnc_data -> ttnet_h2_config
+    # Path 1: device_register — data → tnc_data → ttnet_h2_config
     tnc = data.get("tnc_data") or data.get("data", {}).get("tnc_data")
     if isinstance(tnc, str):
         try:
@@ -115,14 +115,14 @@ def _patch_h2_keepalive_hosts(data: dict, context: str) -> bool:
         if isinstance(h2, dict):
             h2_containers.append(("tnc_data.ttnet_h2_config", h2))
 
-    # Path 2: get_domains -- data.data.ttnet_h2_config
+    # Path 2: get_domains — data.data.ttnet_h2_config
     inner = data.get("data", {})
     if isinstance(inner, dict):
         h2 = inner.get("ttnet_h2_config")
         if isinstance(h2, dict):
             h2_containers.append(("data.ttnet_h2_config", h2))
 
-    # Path 3: get_domains -- data.ttnet_h2_config (if response is flat)
+    # Path 3: get_domains — data.ttnet_h2_config (if response is flat)
     h2 = data.get("ttnet_h2_config")
     if isinstance(h2, dict):
         h2_containers.append(("ttnet_h2_config", h2))
@@ -153,11 +153,9 @@ def _patch_h2_keepalive_hosts(data: dict, context: str) -> bool:
                     deduped.append(h)
             h2["ping_keepalive_hosts"] = deduped
             patched = True
-            print(
-                f"[H2-PATCH] {context} @ {path}: replaced {len(replaced)} US hosts -> alisg\n"
-                f"  removed: {replaced}\n"
-                f"  new:     {deduped}"
-            )
+            print(f"[H2-PATCH] {context} @ {path}: replaced {len(replaced)} US hosts -> alisg")
+            print(f"[H2-PATCH-REMOVED] {replaced}")
+            print(f"[H2-PATCH-NEW] {deduped}")
         else:
             existing = hosts[:4]
             print(f"[H2-PATCH] {context} @ {path}: no US hosts found in {existing!r} (already alisg?)")
@@ -172,7 +170,7 @@ def _patch_get_domains(data: dict) -> bool:
     """Layer 3: patch ttnet_dispatch_actions in get_domains response data dict.
 
     Adds api19-va.tiktokv.com to the idc_weight_api_normal_ug_incentive_alisg
-    rule so TTNet routes /tiktok/incentive/ paths on api19-va -> Singapore IDC.
+    rule so TTNet routes /tiktok/incentive/ paths on api19-va → Singapore IDC.
     NOTE: sign validation in TTNet rejects unsigned rules; this layer is kept
     as a belt-and-suspenders measure alongside Layer 4.
     Returns True if the rule was found and patched.
@@ -180,7 +178,7 @@ def _patch_get_domains(data: dict) -> bool:
     d = data.get("data", data)
     da = d.get("ttnet_dispatch_actions") or d.get("dispatch_actions")
     if not da:
-        print("[PATCH_GD] dispatch_actions not found -- skipping patch")
+        print("[PATCH_GD] dispatch_actions not found — skipping patch")
         return False
 
     for rule in da:
@@ -220,7 +218,15 @@ def request(flow: http.HTTPFlow) -> None:
 
     if changed:
         flow.request.query = qs
-        print(f"[GEO-REQ] Rewrote region params ->JP: {flow.request.path[:80]}")
+        print(f"[GEO-REQ] Rewrote region params →JP: {flow.request.path[:80]}")
+
+    # Layer 5: rewrite x-tt-app-init-region so server sees JP, not US
+    x_init = flow.request.headers.get("x-tt-app-init-region", "")
+    if x_init and ("sysregion=US" in x_init or "appregion=US" in x_init):
+        new_init = re.sub(r'sysregion=US', 'sysregion=JP', x_init)
+        new_init = re.sub(r'appregion=US', 'appregion=JP', new_init)
+        flow.request.headers["x-tt-app-init-region"] = new_init
+        print(f"[GEO-INIT] Rewrote x-tt-app-init-region: {x_init!r} -> {new_init!r}")
 
 
 def response(flow: http.HTTPFlow) -> None:
@@ -239,13 +245,38 @@ def response(flow: http.HTTPFlow) -> None:
             except Exception:
                 pass
 
+    # ppf/eligibility: log response body (Layer 5 diagnostic)
+    if "ppf/api/eligibility" in url:
+        try:
+            raw = _decode_body(flow.response.content)
+            print(f"[PPF-ELIG] {flow.response.status_code} ({len(raw)}b): {raw[:2000].decode('utf-8', errors='replace')}")
+        except Exception as e:
+            print(f"[PPF-ELIG] error: {e}")
+
     # Layer 1 + Layer 4 (device_register)
     if "device_register" in url:
         _rewrite_geo_cookies(flow)
         try:
             raw = _decode_body(flow.response.content)
-            print(f"[DEVREG-BODY] first 3000b: {raw[:3000].decode('utf-8', errors='replace')}")
             data = json.loads(raw)
+
+            # Log tnc_data dispatch_actions (incentive/ppf rules specifically)
+            tnc = data.get("tnc_data")
+            if isinstance(tnc, str):
+                try:
+                    tnc = json.loads(tnc)
+                except Exception:
+                    tnc = None
+            if isinstance(tnc, dict):
+                da = tnc.get("ttnet_dispatch_actions", [])
+                key_rules = [r for r in da if any(
+                    kw in json.dumps(r) for kw in ['incentive', 'product_facade', 'ppf', 'api19', 'alisg']
+                )]
+                print(f"[DEVREG-TNC-DA] {len(da)} rules total, {len(key_rules)} key (incentive/ppf/alisg):")
+                print(f"[DEVREG-TNC-DA-KEY] {json.dumps(key_rules, ensure_ascii=False)[:4000]}")
+            else:
+                print(f"[DEVREG-TNC-DA] tnc_data not a dict: {type(tnc)}")
+
             h2_patched = _patch_h2_keepalive_hosts(data, "device_register")
             if h2_patched:
                 new_body = json.dumps(data).encode()
@@ -288,7 +319,7 @@ def response(flow: http.HTTPFlow) -> None:
             print(f"[GET_DOMAINS] dispatch_actions ({len(da)} rules, {len(key_rules)} key): "
                   f"{json.dumps(key_rules, ensure_ascii=False)}")
         else:
-            print(f"[GET_DOMAINS] dispatch_actions: NOT FOUND -- first 3000b: "
+            print(f"[GET_DOMAINS] dispatch_actions: NOT FOUND — first 3000b: "
                   f"{json.dumps(data)[:3000]}")
 
         # Log rect_request_control (might contain product_facade drop rules)

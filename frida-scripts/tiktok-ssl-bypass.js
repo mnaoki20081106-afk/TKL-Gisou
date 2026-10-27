@@ -65,6 +65,19 @@ Java.perform(function () {
     }
 });
 
+//Bypass #4 — Locale.getDefault → ja_JP (forces sys_region=JP in TTNet)
+Java.perform(function () {
+    try {
+        var Locale = Java.use("java.util.Locale");
+        Locale.getDefault.overload().implementation = function () {
+            return Locale.JAPAN.value;
+        };
+        logger("[*][+] Hooked Locale.getDefault → ja_JP");
+    } catch (e) {
+        logger("[*][-] Failed to hook Locale.getDefault: " + e);
+    }
+});
+
 function logger(message) {
     console.log(message);
     Java.perform(function () {

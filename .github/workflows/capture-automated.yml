@@ -108,6 +108,15 @@ jobs:
           done
           echo "Final adb state: $(adb -s localhost:5555 get-state 2>/dev/null || echo unknown)"
 
+          echo "=== Set device locale to Japan (sys_region=JP for TTNet) ==="
+          adb -s localhost:5555 shell settings put system system_locales "ja-JP" || true
+          adb -s localhost:5555 shell setprop persist.sys.country JP || true
+          adb -s localhost:5555 shell setprop persist.sys.language ja || true
+          adb -s localhost:5555 shell setprop persist.sys.locale ja-JP || true
+          adb -s localhost:5555 shell am broadcast -a android.intent.action.LOCALE_CHANGED 2>/dev/null || true
+          sleep 2
+          echo "Locale set: $(adb -s localhost:5555 shell getprop persist.sys.locale 2>/dev/null || echo unknown)"
+
           adb -s localhost:5555 shell iptables -A OUTPUT -p udp --dport 443 -j DROP || true
           echo "QUIC block attempted"
 

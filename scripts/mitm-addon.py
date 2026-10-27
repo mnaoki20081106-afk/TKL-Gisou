@@ -70,16 +70,23 @@ def _rewrite_geo_cookies(flow: http.HTTPFlow) -> None:
 
 def request(flow: http.HTTPFlow) -> None:
     """Rewrite sys_region/op_region/region US→JP on all TikTok API requests.
-
-    TTNet derives traffic-control rules from get_domains/v5/ using these params.
-    US region config blocks incentive/product_facade paths client-side before
-    any request reaches the proxy.  Rewriting to JP makes the server return JP
-    routing config (which allows those paths) and tells each API endpoint the
-    device is operating in JP.
+    Also reroute incentive/product_facade from api19-va (Virginia) to
+    api19-normal-c-alisg (Singapore) — TTNet dispatch_actions hardcode a rule
+    routing /tiktok/incentive/ to api19-va which drops JP incentive calls.
+    Transparent reroute at proxy level bypasses that rule entirely.
     """
     url = flow.request.pretty_url
     if not any(h in url for h in ("tiktokv.com", "tiktok.com", "byteoversea")):
         return
+
+    # Layer 3: reroute api19-va incentive/product_facade → Singapore IDC
+    # api19-va drops JP incentive requests regardless of region params/cookies.
+    if "api19-va.tiktokv.com" in flow.request.host and (
+        "/tiktok/incentive/" in flow.request.path
+        or "/product_facade/" in flow.request.path
+    ):
+        flow.request.host = "api19-normal-c-alisg.tiktokv.com"
+        print(f"[IDC-REROUTE] api19-va→alisg: {flow.request.path[:100]}")
 
     qs = flow.request.query
     changed = False
@@ -125,7 +132,12 @@ def response(flow: http.HTTPFlow) -> None:
                 # print dispatch_actions specifically (the traffic control rule set)
                 da = d.get("ttnet_dispatch_actions") or d.get("dispatch_actions")
                 if da is not None:
-                    print(f"[GET_DOMAINS] dispatch_actions ({len(da)} rules): {json.dumps(da, ensure_ascii=False)[:8000]}")
+                    # Print rules that mention api19/va/incentive for diagnostics, then full list
+                    key_rules = [r for r in da if any(
+                        kw in json.dumps(r) for kw in ['api19', 'incentive', 'ppf', 'va.tiktok', 'alisg']
+                    )]
+                    print(f"[GET_DOMAINS] dispatch_actions ({len(da)} rules, {len(key_rules)} key): {json.dumps(key_rules, ensure_ascii=False)}")
+                    print(f"[GET_DOMAINS] all_rules: {json.dumps(da, ensure_ascii=False)[:12000]}")
                 else:
                     print(f"[GET_DOMAINS] dispatch_actions: NOT FOUND — first 6000b: {raw[:6000].decode('utf-8', errors='replace')}")
             except Exception as je:

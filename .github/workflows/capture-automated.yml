@@ -238,8 +238,8 @@ jobs:
           echo "=== mitmdump log (last 80 lines) ==="
           tail -80 mitmdump.log || true
 
-          echo "=== GEO-BYPASS events from mitmdump log ==="
-          grep -a 'GEO-BYPASS' mitmdump.log || echo "(none — addon did not fire)"
+          echo "=== GEO-JP + GEO-BYPASS events from mitmdump log ==="
+          grep -a -E 'GEO-JP|GEO-BYPASS' mitmdump.log || echo "(none — addon did not fire)"
 
           echo "=== logcat TKL_UCODE ==="
           timeout 10 adb -s localhost:5555 logcat -d -s TKL_UCODE 2>/dev/null || true

@@ -29,7 +29,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y android-tools-adb
+          sudo apt-get install -y android-tools-adb proxychains4
           pip install mitmproxy "frida==${FRIDA_VERSION}" frida-tools zstandard
           wget -q "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-arm64.xz" \
             -O frida-server.xz
@@ -165,7 +165,28 @@ jobs:
           sudo iptables -t nat -L PREROUTING -n
           echo "iptables PREROUTING rules set"
 
-          mitmdump --mode transparent \
+          echo "=== Runner exit IP (no proxy) ==="
+          curl -s --connect-timeout 5 https://api.ipify.org || echo "ipify FAILED"
+          echo ""
+
+          echo "=== JP SOCKS5 proxy connectivity test ==="
+          PROXY_IP=$(curl -s --socks5 13.208.246.143:6305 --connect-timeout 15 \
+            https://api.ipify.org 2>/dev/null || echo "PROXY_FAILED")
+          echo "Exit IP via JP proxy: $PROXY_IP"
+
+          cat > /tmp/proxychains.conf << 'EOF'
+strict_chain
+proxy_dns
+tcp_read_time_out 15000
+tcp_connect_time_out 8000
+
+[ProxyList]
+socks5 13.208.246.143 6305
+EOF
+          echo "proxychains config written"
+
+          PROXYCHAINS_CONF_FILE=/tmp/proxychains.conf proxychains4 \
+            mitmdump --mode transparent \
             --ssl-insecure \
             --listen-port 8080 \
             --set flow_detail=1 \
@@ -301,7 +322,10 @@ jobs:
           grep -a -A 80 'KEY:.*gecko/server' traffic.txt | head -300 || echo "(not found)"
 
           echo "=== GET_DOMAINS / POPUP555 / GECKO / GEO-REQ from mitmdump addon ==="
-          grep -a -E '\[(GET_DOMAINS|POPUP555|GECKO|GEO-REQ|GEO-JP|GEO-BYPASS)\]' mitmdump.log | head -300 || echo "(none)"
+          grep -a -E '\[(GET_DOMAINS|POPUP555|GECKO|GEO-REQ|GEO-JP|GEO-BYPASS|DEVREG-BODY|INCENTIVE-REQ|PATCH_GD)\]' mitmdump.log | head -300 || echo "(none)"
+
+          echo "=== INCENTIVE-REQ / PATCH_GD / DEVREG-BODY (product_facade & device_register flow) ==="
+          grep -a -E '\[(INCENTIVE-REQ|PATCH_GD|DEVREG-BODY)\]' mitmdump.log || echo "(none — product_facade not reached proxy)"
 
           echo "=== region/availability fields across all responses ==="
           grep -aE '(store_region|app_region|geo_block|is_available|region_code|region_check|not.*available|TikTok.*Lite.*available|"region"|"country"|"store_country|lite_available|app_available)' traffic.txt \

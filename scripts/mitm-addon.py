@@ -53,6 +53,31 @@ def _rewrite_geo_cookies(flow: http.HTTPFlow) -> None:
         flow.response.headers.add("set-cookie", cookie_val)
 
 
+def request(flow: http.HTTPFlow) -> None:
+    """Rewrite sys_region/op_region/region US→JP on all TikTok API requests.
+
+    TTNet derives traffic-control rules from get_domains/v5/ using these params.
+    US region config blocks incentive/product_facade paths client-side before
+    any request reaches the proxy.  Rewriting to JP makes the server return JP
+    routing config (which allows those paths) and tells each API endpoint the
+    device is operating in JP.
+    """
+    url = flow.request.pretty_url
+    if not any(h in url for h in ("tiktokv.com", "tiktok.com", "byteoversea")):
+        return
+
+    qs = flow.request.query
+    changed = False
+    for param in ("sys_region", "op_region", "region"):
+        if qs.get(param, "").upper() == "US":
+            qs[param] = "JP"
+            changed = True
+
+    if changed:
+        flow.request.query = qs
+        print(f"[GEO-REQ] Rewrote region params →JP: {flow.request.path[:80]}")
+
+
 def response(flow: http.HTTPFlow) -> None:
     url = flow.request.pretty_url
 
@@ -73,11 +98,23 @@ def response(flow: http.HTTPFlow) -> None:
     if "device_register" in url:
         _rewrite_geo_cookies(flow)
 
-    # Diagnostic: log get_domains response to reveal traffic control rule structure
+    # Diagnostic: log get_domains response — print top-level keys + dispatch_actions
     if "get_domains" in url:
         try:
             raw = _decode_body(flow.response.content)
-            print(f"[GET_DOMAINS] {url[-80:]} ({len(raw)}b): {raw[:4000].decode('utf-8', errors='replace')}")
+            try:
+                gd = json.loads(raw)
+                d = gd.get("data", gd)
+                keys = list(d.keys())
+                print(f"[GET_DOMAINS] keys: {keys}")
+                # print dispatch_actions specifically (the traffic control rule set)
+                da = d.get("ttnet_dispatch_actions") or d.get("dispatch_actions")
+                if da is not None:
+                    print(f"[GET_DOMAINS] dispatch_actions ({len(da)} rules): {json.dumps(da, ensure_ascii=False)[:8000]}")
+                else:
+                    print(f"[GET_DOMAINS] dispatch_actions: NOT FOUND — first 6000b: {raw[:6000].decode('utf-8', errors='replace')}")
+            except Exception as je:
+                print(f"[GET_DOMAINS] JSON error: {je} — raw[:2000]: {raw[:2000].decode('utf-8', errors='replace')}")
         except Exception as e:
             print(f"[GET_DOMAINS] decode error: {e}")
 

@@ -300,8 +300,8 @@ jobs:
           echo "=== gecko/server KEY flows ==="
           grep -a -A 80 'KEY:.*gecko/server' traffic.txt | head -300 || echo "(not found)"
 
-          echo "=== GET_DOMAINS / POPUP555 / GECKO from mitmdump addon ==="
-          grep -a -E '\[(GET_DOMAINS|POPUP555|GECKO)\]' mitmdump.log | head -200 || echo "(none)"
+          echo "=== GET_DOMAINS / POPUP555 / GECKO / GEO-REQ from mitmdump addon ==="
+          grep -a -E '\[(GET_DOMAINS|POPUP555|GECKO|GEO-REQ|GEO-JP|GEO-BYPASS)\]' mitmdump.log | head -300 || echo "(none)"
 
           echo "=== region/availability fields across all responses ==="
           grep -aE '(store_region|app_region|geo_block|is_available|region_code|region_check|not.*available|TikTok.*Lite.*available|"region"|"country"|"store_country|lite_available|app_available)' traffic.txt \

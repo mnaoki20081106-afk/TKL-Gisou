@@ -174,16 +174,10 @@ jobs:
             https://api.ipify.org 2>/dev/null || echo "PROXY_FAILED")
           echo "Exit IP via JP proxy: $PROXY_IP"
 
-          cat > /tmp/proxychains.conf << 'EOF'
-strict_chain
-proxy_dns
-tcp_read_time_out 15000
-tcp_connect_time_out 8000
-
-[ProxyList]
-socks5 13.208.246.143 6305
-EOF
+          printf 'strict_chain\nproxy_dns\ntcp_read_time_out 15000\ntcp_connect_time_out 8000\n\n[ProxyList]\nsocks5 13.208.246.143 6305\n' \
+            > /tmp/proxychains.conf
           echo "proxychains config written"
+          cat /tmp/proxychains.conf
 
           PROXYCHAINS_CONF_FILE=/tmp/proxychains.conf proxychains4 \
             mitmdump --mode transparent \

@@ -179,14 +179,14 @@ jobs:
           echo "proxychains config written"
           cat /tmp/proxychains.conf
 
-          PROXYCHAINS_CONF_FILE=/tmp/proxychains.conf proxychains4 \
-            mitmdump --mode transparent \
-            --ssl-insecure \
-            --listen-port 8080 \
-            --set flow_detail=1 \
-            -s scripts/mitm-addon.py \
-            -w traffic.mitm \
-            > mitmdump.log 2>&1 &
+          MITM_CMD="mitmdump --mode transparent --ssl-insecure --listen-port 8080 --set flow_detail=1 -s scripts/mitm-addon.py -w traffic.mitm"
+          if [ "$PROXY_IP" = "PROXY_FAILED" ]; then
+            echo "WARNING: JP proxy unreachable — starting mitmdump WITHOUT proxy (US exit, geo-block likely)"
+            $MITM_CMD > mitmdump.log 2>&1 &
+          else
+            echo "JP proxy OK ($PROXY_IP) — starting mitmdump via proxychains4"
+            PROXYCHAINS_CONF_FILE=/tmp/proxychains.conf proxychains4 $MITM_CMD > mitmdump.log 2>&1 &
+          fi
           echo "MITM_PID=$!" >> $GITHUB_ENV
           sleep 3
           echo "mitmdump started"

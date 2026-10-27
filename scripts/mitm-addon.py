@@ -3,14 +3,16 @@
 mitmproxy addon: JP geo-rewrite + suppress TikTok Lite geo-block dialog.
 
 Layer 1 (device_register): rewrite store-country-code=us → jp in Set-Cookie.
-  TikTok Lite's geo-block chain starts here — device_register assigns the
-  region via a signed cookie.  We overwrite the value to jp so all subsequent
-  requests (consent/api/combine, popup/dispatch, feed/initial) are served
-  as Japan region.  store-country-sign is left intact; strict signature
-  validation is rare on the invite flow.
+  Also log response body to understand IDC selection chain.
 
-Layer 2 (popup/dispatch fallback): if the geo-dialog still fires despite
-  the cookie rewrite, suppress the policy_notice body so the app continues.
+Layer 2 (popup/dispatch fallback): suppress geoblocking_non_op_wo_uid dialog.
+
+Layer 3 (get_domains): patch idc_weight_api_normal_ug_incentive_alisg dispatch
+  rule to include api19-va.tiktokv.com → api19-normal-c-alisg.tiktokv.com.
+  ERR_TTNET_TRAFFIC_CONTROL_DROP on product_facade is a client-side drop from
+  TTNet evaluating dispatch_actions before making a TCP connection.  Patching
+  the rule causes TTNet to route incentive/ paths on api19-va to Singapore
+  instead of dropping them.
 """
 import json
 import gzip
@@ -19,6 +21,9 @@ import re
 from mitmproxy import http
 
 _ZSTD_MAGIC = b'\x28\xb5\x2f\xfd'
+
+# Target service name for the incentive→alisg dispatch rule we need to patch
+_INCENTIVE_ALISG_SVC = "idc_weight_api_normal_ug_incentive_alisg"
 
 
 def _decode_body(content: bytes) -> bytes:
@@ -37,12 +42,7 @@ def _decode_body(content: bytes) -> bytes:
 
 
 def _rewrite_geo_cookies(flow: http.HTTPFlow) -> None:
-    """Rewrite region cookies in device_register Set-Cookie headers.
-
-    store-country-code us→jp : tells each API server the device is JP region.
-    store-idc useast*/usva* → alisg : routes TTNet to Singapore IDC so product_facade
-      goes to api19-normal-c-alisg instead of api19-va (which drops incentive for non-US).
-    """
+    """Rewrite region cookies in device_register Set-Cookie headers."""
     raw_cookies = flow.response.headers.get_all("set-cookie")
     if not any(("store-country-code=" in c or "store-idc=" in c) for c in raw_cookies):
         return
@@ -54,7 +54,6 @@ def _rewrite_geo_cookies(flow: http.HTTPFlow) -> None:
             cookie_val = re.sub(r'store-country-code=[^;,\s]+',
                                 'store-country-code=jp', cookie_val)
         if "store-idc=" in cookie_val:
-            # rewrite any US-based IDC to Singapore
             cookie_val = re.sub(r'store-idc=(?:useast|usva|us)[^;,\s]*',
                                 'store-idc=alisg', cookie_val)
         if cookie_val != orig:
@@ -68,25 +67,71 @@ def _rewrite_geo_cookies(flow: http.HTTPFlow) -> None:
         flow.response.headers.add("set-cookie", cookie_val)
 
 
-def request(flow: http.HTTPFlow) -> None:
-    """Rewrite sys_region/op_region/region US→JP on all TikTok API requests.
-    Also reroute incentive/product_facade from api19-va (Virginia) to
-    api19-normal-c-alisg (Singapore) — TTNet dispatch_actions hardcode a rule
-    routing /tiktok/incentive/ to api19-va which drops JP incentive calls.
-    Transparent reroute at proxy level bypasses that rule entirely.
+def _patch_get_domains(flow: http.HTTPFlow) -> None:
+    """Layer 3: patch ttnet_dispatch_actions in get_domains response.
+
+    Adds api19-va.tiktokv.com to the idc_weight_api_normal_ug_incentive_alisg
+    rule so TTNet routes /tiktok/incentive/ paths on api19-va → Singapore IDC
+    instead of client-side-dropping them (ERR_TTNET_TRAFFIC_CONTROL_DROP).
     """
+    try:
+        raw = _decode_body(flow.response.content)
+    except Exception as e:
+        print(f"[PATCH_GD] decode error: {e}")
+        return
+
+    try:
+        gd = json.loads(raw)
+    except Exception as e:
+        print(f"[PATCH_GD] JSON parse error: {e}")
+        return
+
+    d = gd.get("data", gd)
+    da = d.get("ttnet_dispatch_actions") or d.get("dispatch_actions")
+    if not da:
+        print("[PATCH_GD] dispatch_actions not found — skipping patch")
+        return
+
+    patched = False
+    for rule in da:
+        param = rule.get("param", {})
+        if param.get("service_name") == _INCENTIVE_ALISG_SVC:
+            host_group = param.get("host_group", [])
+            strategy_info = param.get("strategy_info", {})
+            if "api19-va.tiktokv.com" not in host_group:
+                host_group.append("api19-va.tiktokv.com")
+                param["host_group"] = host_group
+            strategy_info["api19-va.tiktokv.com"] = "api19-normal-c-alisg.tiktokv.com"
+            param["strategy_info"] = strategy_info
+            # Remove sign — content changed, old sign is invalid; TTNet may skip
+            # validation or accept unsigned rules gracefully
+            rule.pop("sign", None)
+            patched = True
+            print(f"[PATCH_GD] Patched {_INCENTIVE_ALISG_SVC}: api19-va→api19-normal-c-alisg added, sign removed")
+            break
+
+    if not patched:
+        print(f"[PATCH_GD] Rule {_INCENTIVE_ALISG_SVC} not found in {len(da)} dispatch_actions")
+        return
+
+    # Re-encode and inject
+    new_body = json.dumps(gd).encode()
+    flow.response.content = new_body
+    flow.response.headers["content-length"] = str(len(new_body))
+    if "content-encoding" in flow.response.headers:
+        del flow.response.headers["content-encoding"]
+
+
+def request(flow: http.HTTPFlow) -> None:
+    """Log incentive-path requests to diagnose if product_facade ever reaches proxy."""
     url = flow.request.pretty_url
     if not any(h in url for h in ("tiktokv.com", "tiktok.com", "byteoversea")):
         return
 
-    # Layer 3: reroute api19-va incentive/product_facade → Singapore IDC
-    # api19-va drops JP incentive requests regardless of region params/cookies.
-    if "api19-va.tiktokv.com" in flow.request.host and (
-        "/tiktok/incentive/" in flow.request.path
-        or "/product_facade/" in flow.request.path
-    ):
-        flow.request.host = "api19-normal-c-alisg.tiktokv.com"
-        print(f"[IDC-REROUTE] api19-va→alisg: {flow.request.path[:100]}")
+    # Diagnostic: log any request with incentive or product_facade path
+    path = flow.request.path
+    if "/tiktok/incentive/" in path or "/product_facade/" in path:
+        print(f"[INCENTIVE-REQ] host={flow.request.host} path={path[:120]}")
 
     qs = flow.request.query
     changed = False
@@ -103,7 +148,7 @@ def request(flow: http.HTTPFlow) -> None:
 def response(flow: http.HTTPFlow) -> None:
     url = flow.request.pretty_url
 
-    # Normalize ttzip (TikTok's zstd variant) so mitmproxy stores decoded content
+    # Normalize ttzip
     if flow.response.headers.get("content-encoding", "").lower() == "ttzip":
         raw = flow.response.raw_content
         if raw and raw[:4] == _ZSTD_MAGIC:
@@ -116,12 +161,21 @@ def response(flow: http.HTTPFlow) -> None:
             except Exception:
                 pass
 
-    # Layer 1: JP region assignment via cookie rewrite
+    # Layer 1: JP region via cookie rewrite + body log
     if "device_register" in url:
         _rewrite_geo_cookies(flow)
+        # Log body to understand IDC fields TTNet reads
+        try:
+            raw = _decode_body(flow.response.content)
+            print(f"[DEVREG-BODY] first 3000b: {raw[:3000].decode('utf-8', errors='replace')}")
+        except Exception as e:
+            print(f"[DEVREG-BODY] error: {e}")
 
-    # Diagnostic: log get_domains response — print top-level keys + dispatch_actions
+    # Layer 3: patch dispatch_actions to route api19-va incentive → Singapore
     if "get_domains" in url:
+        _patch_get_domains(flow)
+
+        # Diagnostics (after patch)
         try:
             raw = _decode_body(flow.response.content)
             try:
@@ -129,23 +183,20 @@ def response(flow: http.HTTPFlow) -> None:
                 d = gd.get("data", gd)
                 keys = list(d.keys())
                 print(f"[GET_DOMAINS] keys: {keys}")
-                # print dispatch_actions specifically (the traffic control rule set)
                 da = d.get("ttnet_dispatch_actions") or d.get("dispatch_actions")
                 if da is not None:
-                    # Print rules that mention api19/va/incentive for diagnostics, then full list
                     key_rules = [r for r in da if any(
                         kw in json.dumps(r) for kw in ['api19', 'incentive', 'ppf', 'va.tiktok', 'alisg']
                     )]
                     print(f"[GET_DOMAINS] dispatch_actions ({len(da)} rules, {len(key_rules)} key): {json.dumps(key_rules, ensure_ascii=False)}")
-                    print(f"[GET_DOMAINS] all_rules: {json.dumps(da, ensure_ascii=False)[:12000]}")
                 else:
-                    print(f"[GET_DOMAINS] dispatch_actions: NOT FOUND — first 6000b: {raw[:6000].decode('utf-8', errors='replace')}")
+                    print(f"[GET_DOMAINS] dispatch_actions: NOT FOUND — first 3000b: {raw[:3000].decode('utf-8', errors='replace')}")
             except Exception as je:
                 print(f"[GET_DOMAINS] JSON error: {je} — raw[:2000]: {raw[:2000].decode('utf-8', errors='replace')}")
         except Exception as e:
             print(f"[GET_DOMAINS] decode error: {e}")
 
-    # Diagnostic: log all popup/dispatch scene=555 bodies (business type identification)
+    # Diagnostic: popup/dispatch scene=555
     if "popup/dispatch" in url and "scene=555" in url:
         try:
             raw = _decode_body(flow.response.content)
@@ -153,7 +204,7 @@ def response(flow: http.HTTPFlow) -> None:
         except Exception as e:
             print(f"[POPUP555] error: {e}")
 
-    # Diagnostic: log gecko config (TTNet routing rules source)
+    # Diagnostic: gecko config
     if "gecko/server/v5/package" in url or "gecko/api/settings" in url:
         try:
             raw = _decode_body(flow.response.content)
@@ -161,7 +212,7 @@ def response(flow: http.HTTPFlow) -> None:
         except Exception as e:
             print(f"[GECKO] error: {e}")
 
-    # Layer 2: suppress geo-block dialog (fallback if layer 1 is insufficient)
+    # Layer 2: suppress geo-block dialog
     if "popup/dispatch" not in url:
         return
 

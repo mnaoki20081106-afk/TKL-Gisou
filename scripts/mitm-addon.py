@@ -37,19 +37,34 @@ def _decode_body(content: bytes) -> bytes:
 
 
 def _rewrite_geo_cookies(flow: http.HTTPFlow) -> None:
-    """Rewrite store-country-code us→jp in device_register Set-Cookie headers."""
+    """Rewrite region cookies in device_register Set-Cookie headers.
+
+    store-country-code us→jp : tells each API server the device is JP region.
+    store-idc useast*/usva* → alisg : routes TTNet to Singapore IDC so product_facade
+      goes to api19-normal-c-alisg instead of api19-va (which drops incentive for non-US).
+    """
     raw_cookies = flow.response.headers.get_all("set-cookie")
-    if not any("store-country-code=" in c for c in raw_cookies):
+    if not any(("store-country-code=" in c or "store-idc=" in c) for c in raw_cookies):
         return
 
     del flow.response.headers["set-cookie"]
     for cookie_val in raw_cookies:
+        orig = cookie_val
         if "store-country-code=" in cookie_val:
-            orig = cookie_val
             cookie_val = re.sub(r'store-country-code=[^;,\s]+',
                                 'store-country-code=jp', cookie_val)
-            if cookie_val != orig:
-                print(f"[GEO-JP] Rewrote store-country-code → jp  (sign left intact)")
+        if "store-idc=" in cookie_val:
+            # rewrite any US-based IDC to Singapore
+            cookie_val = re.sub(r'store-idc=(?:useast|usva|us)[^;,\s]*',
+                                'store-idc=alisg', cookie_val)
+        if cookie_val != orig:
+            changed = []
+            if "store-country-code=jp" in cookie_val and "store-country-code=jp" not in orig:
+                changed.append("store-country-code→jp")
+            if "store-idc=alisg" in cookie_val and "store-idc=alisg" not in orig:
+                changed.append("store-idc→alisg")
+            if changed:
+                print(f"[GEO-JP] Rewrote {', '.join(changed)}  (sign left intact)")
         flow.response.headers.add("set-cookie", cookie_val)
 
 

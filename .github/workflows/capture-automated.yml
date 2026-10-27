@@ -294,6 +294,15 @@ jobs:
           echo "=== consent/api/combine response ==="
           grep -a -A 30 'KEY:.*consent/api/combine' traffic.txt | head -100 || echo "(not found)"
 
+          echo "=== get_domains KEY flow (traffic control rule structure) ==="
+          grep -a -A 200 'KEY:.*get_domains' traffic.txt | head -500 || echo "(not found)"
+
+          echo "=== gecko/server KEY flows ==="
+          grep -a -A 80 'KEY:.*gecko/server' traffic.txt | head -300 || echo "(not found)"
+
+          echo "=== GET_DOMAINS / POPUP555 / GECKO from mitmdump addon ==="
+          grep -a -E '\[(GET_DOMAINS|POPUP555|GECKO)\]' mitmdump.log | head -200 || echo "(none)"
+
           echo "=== region/availability fields across all responses ==="
           grep -aE '(store_region|app_region|geo_block|is_available|region_code|region_check|not.*available|TikTok.*Lite.*available|"region"|"country"|"store_country|lite_available|app_available)' traffic.txt \
             | head -200 || echo "(no region fields)"

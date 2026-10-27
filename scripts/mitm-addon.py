@@ -73,6 +73,30 @@ def response(flow: http.HTTPFlow) -> None:
     if "device_register" in url:
         _rewrite_geo_cookies(flow)
 
+    # Diagnostic: log get_domains response to reveal traffic control rule structure
+    if "get_domains" in url:
+        try:
+            raw = _decode_body(flow.response.content)
+            print(f"[GET_DOMAINS] {url[-80:]} ({len(raw)}b): {raw[:4000].decode('utf-8', errors='replace')}")
+        except Exception as e:
+            print(f"[GET_DOMAINS] decode error: {e}")
+
+    # Diagnostic: log all popup/dispatch scene=555 bodies (business type identification)
+    if "popup/dispatch" in url and "scene=555" in url:
+        try:
+            raw = _decode_body(flow.response.content)
+            print(f"[POPUP555] {url[-100:]} body: {raw[:2000].decode('utf-8', errors='replace')}")
+        except Exception as e:
+            print(f"[POPUP555] error: {e}")
+
+    # Diagnostic: log gecko config (TTNet routing rules source)
+    if "gecko/server/v5/package" in url or "gecko/api/settings" in url:
+        try:
+            raw = _decode_body(flow.response.content)
+            print(f"[GECKO] {url[-80:]} ({len(raw)}b): {raw[:2000].decode('utf-8', errors='replace')}")
+        except Exception as e:
+            print(f"[GECKO] error: {e}")
+
     # Layer 2: suppress geo-block dialog (fallback if layer 1 is insufficient)
     if "popup/dispatch" not in url:
         return

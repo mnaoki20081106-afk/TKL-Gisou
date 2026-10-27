@@ -48,6 +48,23 @@ Java.perform(function () {
     }
 })
 
+//Universal Android SSL Pinning Bypass #3 — WebView onReceivedSslError
+Java.perform(function () {
+    try {
+        var WebViewClient = Java.use("android.webkit.WebViewClient");
+        WebViewClient.onReceivedSslError.overload(
+            "android.webkit.WebView",
+            "android.webkit.SslErrorHandler",
+            "android.net.http.SslError"
+        ).implementation = function (webView, handler, error) {
+            handler.proceed();
+        };
+        logger("[*][+] Hooked WebViewClient.onReceivedSslError");
+    } catch (e) {
+        logger("[*][-] Failed to hook WebViewClient.onReceivedSslError: " + e);
+    }
+});
+
 function logger(message) {
     console.log(message);
     Java.perform(function () {

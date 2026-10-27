@@ -47,23 +47,31 @@ def main():
         sys.exit(1)
 
     total = 0
+    errors = 0
     key_flows = []
     with open(path, "rb") as f:
         reader = mio.FlowReader(f)
-        for flow in reader.stream():
-            if not isinstance(flow, HTTPFlow):
-                continue
-            total += 1
-            req = flow.request
-            url = req.pretty_url
-            is_key = any(k in url for k in KEY_PATHS)
+        try:
+            for flow in reader.stream():
+                try:
+                    if not isinstance(flow, HTTPFlow):
+                        continue
+                    total += 1
+                    req = flow.request
+                    url = req.pretty_url
+                    is_key = any(k in url for k in KEY_PATHS)
 
-            print(f"{req.method} {url}")
-            if flow.response:
-                ct = flow.response.headers.get("content-type", "")
-                print(f"  -> {flow.response.status_code}  {len(flow.response.content)}b  {ct[:60]}")
-            if is_key:
-                key_flows.append(flow)
+                    print(f"{req.method} {url}")
+                    if flow.response:
+                        ct = flow.response.headers.get("content-type", "")
+                        print(f"  -> {flow.response.status_code}  {len(flow.response.content)}b  {ct[:60]}")
+                    if is_key:
+                        key_flows.append(flow)
+                except Exception as flow_err:
+                    errors += 1
+                    print(f"  [FLOW ERROR #{errors}: {flow_err}]")
+        except Exception as read_err:
+            print(f"[READER ERROR at flow {total}: {read_err}]")
 
     print(f"\n\nTotal flows: {total}  Key flows: {len(key_flows)}")
     print("=" * 70)

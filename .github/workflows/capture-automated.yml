@@ -181,12 +181,22 @@ jobs:
       - name: Open invite URL + deeplink + accept
         run: |
           INVITE_URL="${{ github.event.inputs.invite_url }}"
-          echo "Opening: $INVITE_URL"
-          # No package constraint — let Android route via App Links (pm set-app-link already set to always)
+          echo "Opening short URL: $INVITE_URL"
+
+          # Resolve short URL → full www.tiktok.com invite page URL (2-hop redirect)
+          FULL_URL=$(curl -s -L -o /dev/null -w '%{url_effective}' \
+            -A "Mozilla/5.0 (Linux; Android 11; arm64) AppleWebKit/537.36" \
+            "$INVITE_URL" 2>/dev/null || true)
+          echo "Resolved URL: $FULL_URL"
+
+          # Fire at TikTok Lite via explicit component — bypasses App Links verification.
+          # TokenFilterInvisibleActivity handles BROWSABLE https and routes to WebView internally.
+          COMPONENT="com.zhiliaoapp.musically.go/com.ss.android.ugc.aweme.login.TokenFilterInvisibleActivity"
           adb -s localhost:5555 shell am start -W \
+            -n "$COMPONENT" \
             -a android.intent.action.VIEW \
             -c android.intent.category.BROWSABLE \
-            -d "$INVITE_URL" \
+            -d "${FULL_URL:-$INVITE_URL}" \
             && echo "am start: OK" || echo "am start: failed (continuing)"
 
           echo "Waiting 40s for WebView to render invite page..."
